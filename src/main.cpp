@@ -13,9 +13,9 @@ int main()
 	//launch all the functionalities of the application
 	create_tasks();
 
-	while(1) {
-		//TO-DO codice da linea di comando per interagire
-	}
+
+	//TO-DO codice da linea di comando per interagire
+	getchar();
 
     return 0;
 }
