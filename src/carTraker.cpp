@@ -59,10 +59,20 @@ struct handler_t {
 
 } handler;
 
+//values of the various components: sensors, motors, etc.
+struct comp_val_t {
+    //to access the values
+    sem_t acc_comp;
+
+    //frame taken from the camera
+    int x, y;
+
+} comp_val;
+
 void init() {
     ptask_init(SCHED_RR, GLOBAL, NO_PROTOCOL);
 	
-	init_handler(&handler);
+	init_handlers(&handler, &comp_val);
 
 	//--- open the camera
     cap.open(0);
@@ -83,10 +93,11 @@ void init() {
 }
 
 /* inizializzazione della struttura condivisa */
-void init_handler(struct handler_t *h) {
+void init_handlers(struct handler_t *h, struct comp_val_t *c) {
 
     /* mutua esclusione */
     sem_init(&h->acc_frame,0,1);
+	sem_init(&c->acc_comp,0,1);
 }
 
 
@@ -250,7 +261,7 @@ void trackFilteredObject(int &x, int &y, Mat threshold, Mat &cameraFeed){
 
 
 //preprocess of the frame
-void preproc_detect(struct handler_t *h) {
+void preproc_detect(struct handler_t *h, struct comp_val_t *c) {
 	int x, y;
 
 	Mat local_frame, HSV, threshold, gray;
@@ -268,7 +279,7 @@ void preproc_detect(struct handler_t *h) {
 	
 	morphOps(threshold);
 	
-	//trackFilteredObject(x, y, threshold, local_frame);
+	trackFilteredObject(x, y, threshold, local_frame);
 
 	cvtColor(threshold, gray, COLOR_GRAY2BGR);
 	threshold_debug.write(gray);
@@ -276,6 +287,17 @@ void preproc_detect(struct handler_t *h) {
 	imwrite("test.jpg", local_frame);
 
 	//cout << "FINAL:\nX: " << x << "\nY: " << y << endl;
+
+	x = 10;
+	y = 20;
+
+
+	sem_wait(&c->acc_comp);
+
+	c->x = x;
+	c->y = y;
+
+	sem_post(&c->acc_comp);
 	
 	//cvtColor(threshold, gray, COLOR_GRAY2BGR);
 
@@ -290,7 +312,7 @@ void detect_track() {
 	while(1) {
 		//cout << "pigliaml il frame\n";
 
-		preproc_detect(&handler);
+		preproc_detect(&handler, &comp_val);
 		
 		current = get_time_ms();
 
@@ -301,8 +323,44 @@ void detect_track() {
 	}
 }
 
+//calculate the values of the servo 
+int calc_servo(struct comp_val_t *c) {
+
+	int x, y, servo_val;
+
+	sem_wait(&c->acc_comp);
+
+	x = c->x;
+	y = c->y;
+
+	sem_post(&c->acc_comp);
+
+	cout << "x: " << x << " and y: " << y << "\n\n\n\n\n";
 
 
+	servo_val = 90;
+	return servo_val;
+}
+
+//periodic task - moves the car using the parameters calculated by the other tasks
+void check_move() {
+
+	long int current;
+	int i = 0, servo_val;
+	
+	while(1) {
+		//cout << "pigliaml il frame\n";
+
+		servo_val = calc_servo(&comp_val);
+		
+		current = get_time_ms();
+
+		i++;
+		cout << "move: " << current-start << " ms, frame n. " << i << "\n";
+
+		ptask_wait_for_period();
+	}
+}
 
 
 
@@ -311,6 +369,7 @@ void detect_track() {
 
 void create_tasks() {
     tpars param;
+	tpars mover_prm;
 	tpars param_sec;
 	int ret;
 
@@ -330,6 +389,13 @@ void create_tasks() {
 	param.measure_flag = 1;
 	param.act_flag = NOW;
 
+	mover_prm = TASK_SPEC_DFL;
+	mover_prm.period = tspec_from(PER, MILLI);
+	mover_prm.rdline = tspec_from(DREL, MILLI);
+	mover_prm.priority = PRIO-1;
+	mover_prm.measure_flag = 1;
+	mover_prm.act_flag = NOW;
+
 	ret = ptask_create_param(frame_acquisition, &param);
 
 	fflush(stdout);
@@ -347,6 +413,15 @@ void create_tasks() {
 		printf("%i\n", ret);
 
 	ret = ptask_create_param(detect_track, &param);
+
+	fflush(stdout);
+	if(ret == -1)
+		printf("Error during the creation of the tasks\n");
+	else
+		printf("%i\n", ret);
+
+	//create the task that moves the car
+	ret = ptask_create_param(check_move, &mover_prm);
 
 	fflush(stdout);
 	if(ret == -1)
