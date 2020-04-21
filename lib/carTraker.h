@@ -1,3 +1,4 @@
+//default libraries
 #include <stdio.h>
 #include <semaphore.h>
 #include <unistd.h>
@@ -5,11 +6,19 @@
 #include <iostream>
 #include <ctime>
 #include <sys/time.h>
+#include <string.h>
+#include <errno.h>
 
+//serial libraries
+#include <wiringPi.h>
+#include <wiringSerial.h>
+
+//ptask library
 extern "C" {
     #include "ptask.h"
 }
 
+//opencv libraries 
 #include <opencv2/opencv.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/videoio.hpp>
@@ -32,6 +41,8 @@ void preproc_detect(struct handler_t *h, struct comp_val_t *c);
 void trackFilteredObject(int &x, int &y, Mat threshold, Mat &cameraFeed);
 void morphOps(Mat &thresh);
 void check_move();
-int calc_servo(struct comp_val_t *c);
+void calc_movement(struct comp_val_t *c, int& servo_val, int& engine_val);
+void send_movement(int componentId, int componentValue);
+void receive_sensor_data(int& componentId, int& componentValue);
 
 void create_tasks();

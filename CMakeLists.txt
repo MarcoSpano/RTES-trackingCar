@@ -10,6 +10,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}")
 find_package(Threads REQUIRED)
 find_package(ptask REQUIRED)
 find_package(OpenCV REQUIRED)
+find_library(wiringPi_LIB wiringPi)
 
 set(ptask_INCLUDE_DIRS "${ptask_DIR}/include")
 message("Including dir ${ptask_INCLUDE_DIRS}...")
@@ -19,4 +20,4 @@ add_executable(application src/main.cpp src/carTraker.cpp)
 include_directories ("${ptask_INCLUDE_DIRS}")
 include_directories(${OpenCV_INCLUDE_DIRS} )
 
-target_link_libraries(application ${OpenCV_LIBS} ptask Threads::Threads rt m)
+target_link_libraries(application ${OpenCV_LIBS} ptask Threads::Threads ${wiringPi_LIB} rt m)

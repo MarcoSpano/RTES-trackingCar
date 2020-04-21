@@ -6,9 +6,15 @@
 using namespace std;
 using namespace cv;
 
-#define PER 100
-#define DREL 100
+#define PER 1000
+#define DREL 1100
 #define PRIO 80
+#define SER_MESS_LENGTH 20
+
+int fd_serial;
+
+//physical components values
+const int SERVO_RANGE = 180;
 
 int H_MIN = 120;
 int H_MAX = 155;
@@ -79,7 +85,7 @@ void init() {
 
     if (!cap.isOpened()) {
         cerr << "ERROR! Unable to open camera\n";
-        //return -1;
+        
     }
 	
 	cap.set(CAP_PROP_FRAME_WIDTH,FRAME_WIDTH);
@@ -88,6 +94,24 @@ void init() {
 	out_capture.open("4video_car.avi", VideoWriter::fourcc('M','J','P','G'), 1000/PER, Size(640,480));
 	//DEBUG
 	threshold_debug.open("4debug.avi", VideoWriter::fourcc('M','J','P','G'), 1000/PER, Size(640,480));
+
+	//opens and initializes serial connection
+	if ((fd_serial = serialOpen ("/dev/ttyUSB0", 9600)) < 0)
+	{
+		fprintf (stderr, "Unable to open serial device: %s\n", strerror (errno)) ;
+		
+	}
+
+	if (wiringPiSetup () == -1)
+	{
+		fprintf (stdout, "Unable to start wiringPi: %s\n", strerror (errno)) ;
+		
+	}
+
+	//let's flush before start
+	serialFlush(fd_serial) ;
+	fflush(stdin);
+	fflush(stdout);
 
 	start = get_time_ms();
 }
@@ -125,11 +149,12 @@ void get_frame(struct handler_t *h) {
 //periodic task to take frames from the camera 
 void frame_acquisition() {
 
-	long int current;
+	long int current, start;
 	int i = 0;
 	
 	while(1) {
 		//cout << "pigliaml il frame\n";
+		start = get_time_ms();
 
 		get_frame(&handler);
 		
@@ -160,10 +185,11 @@ void store_frame(struct handler_t *h) {
 //take all the frames and store them in a video
 void store_video() {
 
-    long int current;
+    long int current, start;
 	int i = 0;
 
 	while(1) {
+		start = get_time_ms();
 		
 		store_frame(&handler);
 
@@ -262,7 +288,7 @@ void trackFilteredObject(int &x, int &y, Mat threshold, Mat &cameraFeed){
 
 //preprocess of the frame
 void preproc_detect(struct handler_t *h, struct comp_val_t *c) {
-	int x, y;
+	int x = 0, y = 0;
 
 	Mat local_frame, HSV, threshold, gray;
 
@@ -287,10 +313,7 @@ void preproc_detect(struct handler_t *h, struct comp_val_t *c) {
 	imwrite("test.jpg", local_frame);
 
 	//cout << "FINAL:\nX: " << x << "\nY: " << y << endl;
-
-	x = 10;
-	y = 20;
-
+	
 
 	sem_wait(&c->acc_comp);
 
@@ -306,10 +329,11 @@ void preproc_detect(struct handler_t *h, struct comp_val_t *c) {
 //periodic task to take frames from the camera 
 void detect_track() {
 
-	long int current;
+	long int current, start;
 	int i = 0;
 	
 	while(1) {
+		start = get_time_ms();
 		//cout << "pigliaml il frame\n";
 
 		preproc_detect(&handler, &comp_val);
@@ -324,9 +348,9 @@ void detect_track() {
 }
 
 //calculate the values of the servo 
-int calc_servo(struct comp_val_t *c) {
+void calc_movement(struct comp_val_t *c, int& servo_val, int& engine_val) {
 
-	int x, y, servo_val;
+	int x, y;
 
 	sem_wait(&c->acc_comp);
 
@@ -337,22 +361,47 @@ int calc_servo(struct comp_val_t *c) {
 
 	cout << "x: " << x << " and y: " << y << "\n\n\n\n\n";
 
+	
 
-	servo_val = 90;
-	return servo_val;
+	servo_val = (int)(x * SERVO_RANGE / FRAME_WIDTH);
+
+	cout << "servo_val: " << servo_val << endl;
+}
+
+void send_movement(int componentId, int componentValue) {
+	char ser_message[SER_MESS_LENGTH];
+
+	sprintf(ser_message, "<%d:%d>", componentId, componentValue);
+	serialPuts(fd_serial, ser_message);
+}
+
+void receive_sensor_data(int& componentId, int& componentValue) {
+	printf ("%c", serialGetchar(fd_serial)) ;
 }
 
 //periodic task - moves the car using the parameters calculated by the other tasks
 void check_move() {
 
-	long int current;
-	int i = 0, servo_val;
-	
+	long int current, start;
+	int i = 0, servo_val = 0, engine_val = 0;
+	int componentId, componentValue;
 	while(1) {
 		//cout << "pigliaml il frame\n";
+		start = get_time_ms();
 
-		servo_val = calc_servo(&comp_val);
+		if(serialDataAvail(fd_serial) == -1) {
+			printf("error\n");
+		} else {
+			//read
+			printf("%d data available\n", serialDataAvail(fd_serial));
+			while (serialDataAvail(fd_serial) != 0) {
+				receive_sensor_data(componentId, componentValue);
+			}
+		}
 		
+		calc_movement(&comp_val, servo_val, engine_val);
+		send_movement(2, servo_val);
+
 		current = get_time_ms();
 
 		i++;
