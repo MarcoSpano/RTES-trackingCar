@@ -6,10 +6,19 @@
 using namespace std;
 using namespace cv;
 
-#define PER 1000
-#define DREL 1100
+//ptask defines
+#define PER 100
+#define DREL 110
 #define PRIO 80
 #define SER_MESS_LENGTH 20
+
+//opencv defines
+#define CANNY_MIN_THRESH 50
+#define CANNY_MAX_THRESH 150
+#define MIN_CIRCLE_DIST 15
+#define CIRCLE_THRESH 17
+#define MIN_RADIUS 4
+#define MAX_RADIUS 20
 
 int fd_serial;
 
@@ -65,6 +74,23 @@ struct handler_t {
 
 } handler;
 
+//it handles the synchronization between the detection tasks
+struct detection_handler_t {
+    //to access the results of each detection part
+    sem_t det_sem;
+	sem_t priv_col;
+	sem_t priv_circ;
+
+	//syncronization variables
+	int color_ready;
+	int circles_ready;
+
+    //frame taken from the camera
+    Mat color_thresh;
+	Mat circles_thresh;
+
+} detection_handler;
+
 //values of the various components: sensors, motors, etc.
 struct comp_val_t {
     //to access the values
@@ -78,7 +104,7 @@ struct comp_val_t {
 void init() {
     ptask_init(SCHED_RR, GLOBAL, NO_PROTOCOL);
 	
-	init_handlers(&handler, &comp_val);
+	init_handlers(&handler, &comp_val, &detection_handler);
 
 	//--- open the camera
     cap.open(0);
@@ -117,11 +143,20 @@ void init() {
 }
 
 /* inizializzazione della struttura condivisa */
-void init_handlers(struct handler_t *h, struct comp_val_t *c) {
+void init_handlers(struct handler_t *h, struct comp_val_t *c, struct detection_handler_t *d) {
 
     /* mutua esclusione */
     sem_init(&h->acc_frame,0,1);
 	sem_init(&c->acc_comp,0,1);
+	sem_init(&d->det_sem,0,1);
+	sem_init(&d->priv_col,0,0);
+	sem_init(&d->priv_circ,0,0);
+
+	d->color_ready = 0;
+	d->circles_ready = 0;
+
+	c->x = 0;
+	c->y = 0;
 }
 
 
@@ -174,7 +209,8 @@ void store_frame(struct handler_t *h) {
 
 	sem_wait(&h->acc_frame);
 
-	local_frame = h->frame.clone();
+	// local_frame = h->frame.clone();
+	h->frame.copyTo(local_frame);
 
 	sem_post(&h->acc_frame);
 	
@@ -216,29 +252,17 @@ void morphOps(Mat &thresh){
 	//create structuring element that will be used to "dilate" and "erode" image.
 	//the element chosen here is a 3px by 3px rectangle
 
-	Mat erodeElement = getStructuringElement( MORPH_RECT,Size(3,3));
-    //dilate with larger element so make sure object is nicely visible
-	Mat dilateElement = getStructuringElement( MORPH_RECT,Size(7,7));
+	Mat erodeElement = getStructuringElement(MORPH_RECT, Size(4, 4));
+	//dilate with larger element so make sure object is nicely visible
+	Mat dilateElement = getStructuringElement(MORPH_RECT, Size(8, 8));
 
-	erode(thresh,thresh,erodeElement);
-
-
-	dilate(thresh,thresh,dilateElement);
-	
-	
-	erode(thresh,thresh,erodeElement);
-	erode(thresh,thresh,erodeElement);
-	erode(thresh,thresh,erodeElement);
-	erode(thresh,thresh,erodeElement);
-	erode(thresh,thresh,erodeElement);
-	erode(thresh,thresh,erodeElement);
-
-	dilate(thresh,thresh,dilateElement);
+	erode(thresh, thresh, erodeElement);
+	dilate(thresh, thresh, dilateElement);
 	dilate(thresh,thresh,dilateElement);
 
 }
 
-void trackFilteredObject(int &x, int &y, Mat threshold, Mat &cameraFeed){
+void trackFilteredObject(int &x, int &y, Mat threshold){
 
 	Mat temp;
 	threshold.copyTo(temp);
@@ -268,10 +292,6 @@ void trackFilteredObject(int &x, int &y, Mat threshold, Mat &cameraFeed){
 					y = moment.m01/area;
 					objectFound = true;
 					refArea = area;
-				}else {
-					objectFound = false;
-					x = 0;
-					y = 0;
 				}
 
 				cout << "TEMP " << index << ":\n	X: " << x << "\n	Y: " << y << endl;
@@ -287,47 +307,72 @@ void trackFilteredObject(int &x, int &y, Mat threshold, Mat &cameraFeed){
 
 
 //preprocess of the frame
-void preproc_detect(struct handler_t *h, struct comp_val_t *c) {
-	int x = 0, y = 0;
+void preproc_detect(struct handler_t *h, struct detection_handler_t *d) {
+	//int x = 0, y = 0;
 
-	Mat local_frame, HSV, threshold, gray;
+	//DEBUG gray
+	Mat local_frame, HSV, color_thresh, gray;
 
 	sem_wait(&h->acc_frame);
 
-	local_frame = h->frame.clone();
+	// local_frame = h->frame.clone();
+	h->frame.copyTo(local_frame);
 
 	sem_post(&h->acc_frame);
 
+	//DEBUG
+	if(local_frame.empty()) 
+			printf("\n\n\n\nlocal frame COLOR EMPTY");
+
+	fflush(stdout);
 
 	//convert frame from BGR to HSV colorspace
 	cvtColor(local_frame, HSV, COLOR_BGR2HSV);
-	inRange(HSV, Scalar(H_MIN, S_MIN, V_MIN), Scalar(H_MAX, S_MAX, V_MAX), threshold);
+	inRange(HSV, Scalar(H_MIN, S_MIN, V_MIN), Scalar(H_MAX, S_MAX, V_MAX), color_thresh);
 	
-	morphOps(threshold);
+	//morphOps(threshold);
 	
-	trackFilteredObject(x, y, threshold, local_frame);
+	// trackFilteredObject(x, y, threshold, local_frame);
 
-	cvtColor(threshold, gray, COLOR_GRAY2BGR);
-	threshold_debug.write(gray);
+	//DEBUG
+		cvtColor(color_thresh, gray, COLOR_GRAY2BGR);
+		threshold_debug.write(gray);
 
-	imwrite("test.jpg", local_frame);
+	//imwrite("test.jpg", local_frame);
 
 	//cout << "FINAL:\nX: " << x << "\nY: " << y << endl;
 	
+	if(color_thresh.empty()) 
+			printf("\n\n\n\nsONO IO CHE GLIELO DO VUOTO\n");
 
-	sem_wait(&c->acc_comp);
+	fflush(stdout);
+	
 
-	c->x = x;
-	c->y = y;
+	sem_wait(&d->det_sem);
 
-	sem_post(&c->acc_comp);
+	color_thresh.copyTo(d->color_thresh);
+
+	if(d->color_thresh.empty()) 
+		printf("\n\n\n\nCopia sbagliata?\n");
+
+	fflush(stdout);
+
+	
+	if(d->color_ready == 0) {
+		//my part is ready, waking up the task that calculates movement
+		d->color_ready = 1;
+		sem_post(&d->priv_col);
+	}
+		
+
+	sem_post(&d->det_sem);
 	
 	//cvtColor(threshold, gray, COLOR_GRAY2BGR);
 
 }
 
-//periodic task to take frames from the camera 
-void detect_track() {
+//
+void detect_color() {
 
 	long int current, start;
 	int i = 0;
@@ -336,32 +381,155 @@ void detect_track() {
 		start = get_time_ms();
 		//cout << "pigliaml il frame\n";
 
-		preproc_detect(&handler, &comp_val);
+		preproc_detect(&handler, &detection_handler);
 		
 		current = get_time_ms();
 
 		i++;
-		cout << "detect: " << current-start << " ms, frame n. " << i << "\n";
+		cout << "detect color: " << current-start << " ms, frame n. " << i << "\n";
+		fflush(stdout);
+
+		ptask_wait_for_period();
+	}
+}
+
+//preprocess of the frame
+void circles_detection(struct handler_t *h, struct detection_handler_t *d) {
+	//int x = 0, y = 0;
+
+	Mat local_frame, gray, edges;
+	Mat circles_thresh(FRAME_HEIGHT, FRAME_WIDTH, CV_8UC1, Scalar(0));
+	vector<Vec3f> circles_detected;
+
+	sem_wait(&h->acc_frame);
+
+	// local_frame = h->frame.clone();
+	h->frame.copyTo(local_frame);
+	
+
+	sem_post(&h->acc_frame);
+
+	//DEBUG
+	if(local_frame.empty()) 
+			printf("\n\n\n\nlocal frame circles EMPTY");
+	fflush(stdout);
+
+	cvtColor(local_frame, gray, COLOR_BGR2GRAY);
+
+	Canny(gray, edges, CANNY_MIN_THRESH, CANNY_MAX_THRESH, 3);
+	HoughCircles(edges, circles_detected, HOUGH_GRADIENT, 1, MIN_CIRCLE_DIST, CANNY_MAX_THRESH, CIRCLE_THRESH, MIN_RADIUS, MAX_RADIUS);
+
+	//drawing the detected circles on a blank image, to create the 'threshold'
+	for (size_t i = 0; i < circles_detected.size(); i++)
+	{
+		Point tmp_center(cvRound(circles_detected[i][0]), cvRound(circles_detected[i][1]));
+		int tmp_radius = cvRound(circles_detected[i][2]);
+
+		circle(circles_thresh, tmp_center, tmp_radius, Scalar(255), -1, 8, 0);
+	}
+
+	sem_wait(&d->det_sem);
+
+	circles_thresh.copyTo(d->circles_thresh);
+	// d->circles_thresh = circles_thresh.clone();
+
+	if(d->circles_ready == 0) {
+		//my part is ready, waking up the task that calculates movement
+		d->circles_ready = 1;
+		sem_post(&d->priv_circ);
+	}
+
+	sem_post(&d->det_sem);
+	
+	//cvtColor(threshold, gray, COLOR_GRAY2BGR);
+
+}
+
+//
+void detect_circles() {
+
+	long int current, start;
+	int i = 0;
+	
+	while(1) {
+		start = get_time_ms();
+		//cout << "pigliaml il frame\n";
+
+		circles_detection(&handler, &detection_handler);
+		
+		current = get_time_ms();
+
+		i++;
+		cout << "detect circ: " << current-start << " ms, frame n. " << i << "\n";
+		fflush(stdout);
 
 		ptask_wait_for_period();
 	}
 }
 
 //calculate the values of the servo 
-void calc_movement(struct comp_val_t *c, int& servo_val, int& engine_val) {
+void calc_movement(struct detection_handler_t *d, int& servo_val, int& engine_val) {
 
 	int x, y;
+	Mat local_col_thresh, local_circ_thresh, bitwise_thresh;
 
-	sem_wait(&c->acc_comp);
+	//wait for circles and color threshold to be ready
+	sem_wait(&d->priv_circ);
+	sem_wait(&d->priv_col);
 
-	x = c->x;
-	y = c->y;
+	sem_wait(&d->det_sem);
 
-	sem_post(&c->acc_comp);
+	//DEBUG
+	if(d->circles_ready == 0 || d->color_ready == 0)
+		printf("NON DOVREI ESSERE QUI\n\n");
 
-	cout << "x: " << x << " and y: " << y << "\n\n\n\n\n";
+	//consume their part
+	d->circles_ready = 0;
+	d->color_ready = 0;
 
+	printf("color and threshold part is ready!!!\n\n\n\n\n");
+	fflush(stdout);
+
+//DEBUG
+	if(d->color_thresh.empty())
+		printf("Malisssssssssimo\n\n\n\n\n");
+	if(d->circles_thresh.empty())
+		printf("Malisssssssssimo\n\n\n\n\n");
+
+
+	// local_col_thresh = d->color_thresh.clone();
+	// local_circ_thresh = d->circles_thresh.clone();
+	d->color_thresh.copyTo(local_col_thresh);
+	d->circles_thresh.copyTo(local_circ_thresh);
+
+	sem_post(&d->det_sem);
 	
+//DEBUG
+	if(local_col_thresh.empty()) 
+			printf("\n\n\n\nlocal col EMPTY");
+	if(local_circ_thresh.empty()) 
+			printf("\n\n\n\nlocal circ EMPTY");
+	
+	printf("prima del bitwise\n\n\n\n\n");
+	fflush(stdout);
+	bitwise_and(local_col_thresh, local_circ_thresh, bitwise_thresh);
+	printf("dopo il bitwise\n\n\n\n\n");
+
+	//DEBUG
+		Mat gray;
+
+		if(bitwise_thresh.empty()) 
+			printf("\n\n\n\nBITWISE EMPTY");
+			fflush(stdout);
+		cvtColor(bitwise_thresh, gray, COLOR_GRAY2BGR);
+		imwrite("bitwise.jpg", gray);
+
+
+	morphOps(bitwise_thresh);
+	printf("ricerca dell'oggetto\n\n");
+	fflush(stdout);
+	
+	trackFilteredObject(x, y, bitwise_thresh);
 
 	servo_val = (int)(x * SERVO_RANGE / FRAME_WIDTH);
 
@@ -399,7 +567,10 @@ void check_move() {
 			}
 		}
 		
-		calc_movement(&comp_val, servo_val, engine_val);
+		printf("calc parte\n\n");
+
+		calc_movement(&detection_handler, servo_val, engine_val);
+		printf("calc finisce\n\n");
 		send_movement(2, servo_val);
 
 		current = get_time_ms();
@@ -461,7 +632,15 @@ void create_tasks() {
 	else
 		printf("%i\n", ret);
 
-	ret = ptask_create_param(detect_track, &param);
+	ret = ptask_create_param(detect_color, &param);
+
+	fflush(stdout);
+	if(ret == -1)
+		printf("Error during the creation of the tasks\n");
+	else
+		printf("%i\n", ret);
+
+	ret = ptask_create_param(detect_circles, &param);
 
 	fflush(stdout);
 	if(ret == -1)

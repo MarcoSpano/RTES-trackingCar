@@ -31,17 +31,19 @@ long int get_time_ms();
 
 void init();
 
-void init_handlers(struct handler_t *h, struct comp_val_t *c);
+void init_handlers(struct handler_t *h, struct comp_val_t *c, struct detection_handler_t *d);
 void get_frame(struct handler_t *h);
 void frame_acquisition();
 void store_frame(struct handler_t *h);
 void store_video();
-void detect_track();
+void detect_color();
 void preproc_detect(struct handler_t *h, struct comp_val_t *c);
-void trackFilteredObject(int &x, int &y, Mat threshold, Mat &cameraFeed);
+void detect_circles();
+void circles_detection(struct handler_t *h, struct detection_handler_t *d);
+void trackFilteredObject(int &x, int &y, Mat threshold);
 void morphOps(Mat &thresh);
 void check_move();
-void calc_movement(struct comp_val_t *c, int& servo_val, int& engine_val);
+void calc_movement(struct detection_handler_t *d, int& servo_val, int& engine_val);
 void send_movement(int componentId, int componentValue);
 void receive_sensor_data(int& componentId, int& componentValue);
 
