@@ -16,14 +16,16 @@ using namespace cv;
 #define CANNY_MIN_THRESH 50
 #define CANNY_MAX_THRESH 150
 #define MIN_CIRCLE_DIST 15
-#define CIRCLE_THRESH 17
+#define CIRCLE_THRESH 16
 #define MIN_RADIUS 4
-#define MAX_RADIUS 20
+#define MAX_RADIUS 40
 
 int fd_serial;
 
 //physical components values
-const int SERVO_RANGE = 180;
+#define INPUT_SENSOR_LENGTH 10
+#define SERVO_RANGE 100
+#define SERVO_OFFSET 40
 
 int H_MIN = 120;
 int H_MAX = 155;
@@ -46,6 +48,7 @@ VideoWriter out_capture;
 
 //DEBUG
 VideoWriter threshold_debug;
+VideoWriter circles_debug;
 
 long int start;
 
@@ -120,6 +123,7 @@ void init() {
 	out_capture.open("4video_car.avi", VideoWriter::fourcc('M','J','P','G'), 1000/PER, Size(640,480));
 	//DEBUG
 	threshold_debug.open("4debug.avi", VideoWriter::fourcc('M','J','P','G'), 1000/PER, Size(640,480));
+	circles_debug.open("4debugcirc.avi", VideoWriter::fourcc('M','J','P','G'), 1000/PER, Size(640,480));
 
 	//opens and initializes serial connection
 	if ((fd_serial = serialOpen ("/dev/ttyUSB0", 9600)) < 0)
@@ -397,7 +401,7 @@ void detect_color() {
 void circles_detection(struct handler_t *h, struct detection_handler_t *d) {
 	//int x = 0, y = 0;
 
-	Mat local_frame, gray, edges;
+	Mat local_frame, gray, edges, debugss;
 	Mat circles_thresh(FRAME_HEIGHT, FRAME_WIDTH, CV_8UC1, Scalar(0));
 	vector<Vec3f> circles_detected;
 
@@ -427,6 +431,9 @@ void circles_detection(struct handler_t *h, struct detection_handler_t *d) {
 
 		circle(circles_thresh, tmp_center, tmp_radius, Scalar(255), -1, 8, 0);
 	}
+
+	cvtColor(circles_thresh, debugss, COLOR_GRAY2BGR);
+		circles_debug.write(debugss);
 
 	sem_wait(&d->det_sem);
 
@@ -461,6 +468,72 @@ void detect_circles() {
 
 		i++;
 		cout << "detect circ: " << current-start << " ms, frame n. " << i << "\n";
+		fflush(stdout);
+
+		ptask_wait_for_period();
+	}
+}
+
+void receive_sensor_data(int& componentId, int& componentValue) {
+	char input_sensor [INPUT_SENSOR_LENGTH];
+	char next_char = 0;
+	char *eptr;
+	long int sensor_value = 0;
+	int i = 0;
+
+	input_sensor[INPUT_SENSOR_LENGTH - 1] = 0;
+
+	//clean up the serial from bad data
+	while(next_char == 0 || next_char == '\n') {
+		next_char = serialGetchar(fd_serial);
+	}
+
+	//populate the input array with the values from our serial
+	while((next_char >= '0' && next_char <= '9') && i < INPUT_SENSOR_LENGTH - 1) {
+		input_sensor[i] = next_char;
+
+		next_char = serialGetchar(fd_serial);
+		i++;
+
+		if(i >= INPUT_SENSOR_LENGTH - 1) {
+			printf("Errore nell'acquisizione del sensore, il messaggio supera il buffer\n");
+		}
+	}
+	
+	input_sensor[i] = 0; //close the string
+	
+	sensor_value = strtol(input_sensor, &eptr, 10);
+	//printf("Ricevuto valore del sensore di prossimita': %ld\n", sensor_value);
+
+	componentId = 1;
+	componentValue = (int) sensor_value;
+}
+
+void sensor_bridge() {
+
+	long int current, start;
+	int i = 0;
+	int componentId, componentValue;
+	
+	while(1) {
+		start = get_time_ms();
+		//cout << "pigliaml il frame\n";
+
+		if(serialDataAvail(fd_serial) == -1) {
+			//printf("error\n");
+		} else {
+			//read
+			printf("%d data available\n", serialDataAvail(fd_serial));
+			while (serialDataAvail(fd_serial) != 0) {
+				receive_sensor_data(componentId, componentValue);
+				printf("Ricevuto valore del sensore di prossimita': %ld\n", componentValue);
+			}
+		}
+		
+		current = get_time_ms();
+
+		i++;
+		//cout << "detect circ: " << current-start << " ms, frame n. " << i << "\n";
 		fflush(stdout);
 
 		ptask_wait_for_period();
@@ -531,7 +604,7 @@ void calc_movement(struct detection_handler_t *d, int& servo_val, int& engine_va
 	
 	trackFilteredObject(x, y, bitwise_thresh);
 
-	servo_val = (int)(x * SERVO_RANGE / FRAME_WIDTH);
+	servo_val = ((int)(x * SERVO_RANGE / FRAME_WIDTH)) + SERVO_OFFSET;
 
 	cout << "servo_val: " << servo_val << endl;
 }
@@ -543,34 +616,16 @@ void send_movement(int componentId, int componentValue) {
 	serialPuts(fd_serial, ser_message);
 }
 
-void receive_sensor_data(int& componentId, int& componentValue) {
-	printf ("%c", serialGetchar(fd_serial)) ;
-}
-
 //periodic task - moves the car using the parameters calculated by the other tasks
 void check_move() {
 
 	long int current, start;
 	int i = 0, servo_val = 0, engine_val = 0;
-	int componentId, componentValue;
 	while(1) {
 		//cout << "pigliaml il frame\n";
-		start = get_time_ms();
-
-		if(serialDataAvail(fd_serial) == -1) {
-			printf("error\n");
-		} else {
-			//read
-			printf("%d data available\n", serialDataAvail(fd_serial));
-			while (serialDataAvail(fd_serial) != 0) {
-				receive_sensor_data(componentId, componentValue);
-			}
-		}
-		
-		printf("calc parte\n\n");
+		start = get_time_ms();		
 
 		calc_movement(&detection_handler, servo_val, engine_val);
-		printf("calc finisce\n\n");
 		send_movement(2, servo_val);
 
 		current = get_time_ms();
@@ -641,6 +696,16 @@ void create_tasks() {
 		printf("%i\n", ret);
 
 	ret = ptask_create_param(detect_circles, &param);
+
+	fflush(stdout);
+	if(ret == -1)
+		printf("Error during the creation of the tasks\n");
+	else
+		printf("%i\n", ret);
+
+	
+	//create the task that checks the sensors
+	ret = ptask_create_param(sensor_bridge, &mover_prm);
 
 	fflush(stdout);
 	if(ret == -1)

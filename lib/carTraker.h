@@ -42,6 +42,7 @@ void detect_circles();
 void circles_detection(struct handler_t *h, struct detection_handler_t *d);
 void trackFilteredObject(int &x, int &y, Mat threshold);
 void morphOps(Mat &thresh);
+void sensor_bridge();
 void check_move();
 void calc_movement(struct detection_handler_t *d, int& servo_val, int& engine_val);
 void send_movement(int componentId, int componentValue);
