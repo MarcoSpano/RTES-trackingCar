@@ -23,7 +23,11 @@ using namespace cv;
 int fd_serial;
 
 //physical components values
+#define NOT_CHANGE -1
 #define INPUT_SENSOR_LENGTH 10
+#define MIN_OBSTACLE_DIST 10
+#define ENGINE_ID 1
+#define SERVO_ID 2
 #define SERVO_RANGE 100
 #define SERVO_OFFSET 40
 
@@ -95,19 +99,19 @@ struct detection_handler_t {
 } detection_handler;
 
 //values of the various components: sensors, motors, etc.
-struct comp_val_t {
+struct components_handler_t {
     //to access the values
-    sem_t acc_comp;
+    sem_t acc_serial_out;
 
-    //frame taken from the camera
-    int x, y;
+    int sens_dist_val;
+	int last_object_detected;
 
-} comp_val;
+} components_handler;
 
 void init() {
     ptask_init(SCHED_RR, GLOBAL, NO_PROTOCOL);
 	
-	init_handlers(&handler, &comp_val, &detection_handler);
+	init_handlers(&handler, &components_handler, &detection_handler);
 
 	//--- open the camera
     cap.open(0);
@@ -147,11 +151,11 @@ void init() {
 }
 
 /* inizializzazione della struttura condivisa */
-void init_handlers(struct handler_t *h, struct comp_val_t *c, struct detection_handler_t *d) {
+void init_handlers(struct handler_t *h, struct components_handler_t *c, struct detection_handler_t *d) {
 
     /* mutua esclusione */
     sem_init(&h->acc_frame,0,1);
-	sem_init(&c->acc_comp,0,1);
+	sem_init(&c->acc_serial_out,0,1);
 	sem_init(&d->det_sem,0,1);
 	sem_init(&d->priv_col,0,0);
 	sem_init(&d->priv_circ,0,0);
@@ -159,11 +163,29 @@ void init_handlers(struct handler_t *h, struct comp_val_t *c, struct detection_h
 	d->color_ready = 0;
 	d->circles_ready = 0;
 
-	c->x = 0;
-	c->y = 0;
+	c->sens_dist_val = 0;
+	c->last_object_detected = 1;
 }
 
+// int checkObstacle(struct sensors_val_t *s) {
+// 	int obstacle_dist, ret;
 
+// 	sem_wait(&s->acc_sensors);
+
+// 	obstacle_dist = s->sens_dist_val;
+
+// 	sem_post(&s->acc_sensors);
+
+// 	if(obstacle_dist <= MIN_OBSTACLE_DIST) {
+// 		ret = 1; //true
+// 		printf("Obastacle found %d!\n", obstacle_dist);
+// 	} else {
+// 		printf("Obastacle not found %d!\n", obstacle_dist);
+// 		ret = 0; //false
+// 	}
+	
+// 	return ret;
+// }
 
 //get a frame from the camera and stores it in matrix 'frame'
 void get_frame(struct handler_t *h) {
@@ -441,7 +463,7 @@ void circles_detection(struct handler_t *h, struct detection_handler_t *d) {
 	// d->circles_thresh = circles_thresh.clone();
 
 	if(d->circles_ready == 0) {
-		//my part is ready, waking up the task that calculates movement
+		//notify the movement task that my part is ready
 		d->circles_ready = 1;
 		sem_post(&d->priv_circ);
 	}
@@ -474,12 +496,13 @@ void detect_circles() {
 	}
 }
 
-void receive_sensor_data(int& componentId, int& componentValue) {
+void serial_receive(struct components_handler_t *c) {
 	char input_sensor [INPUT_SENSOR_LENGTH];
 	char next_char = 0;
 	char *eptr;
 	long int sensor_value = 0;
 	int i = 0;
+	int current_obj_det = 0;
 
 	input_sensor[INPUT_SENSOR_LENGTH - 1] = 0;
 
@@ -503,17 +526,40 @@ void receive_sensor_data(int& componentId, int& componentValue) {
 	input_sensor[i] = 0; //close the string
 	
 	sensor_value = strtol(input_sensor, &eptr, 10);
-	//printf("Ricevuto valore del sensore di prossimita': %ld\n", sensor_value);
 
-	componentId = 1;
-	componentValue = (int) sensor_value;
+	//insert and elaborate
+	sem_wait(&c->acc_serial_out);
+
+	c->sens_dist_val = (int) sensor_value;
+
+
+	if(c->sens_dist_val <= MIN_OBSTACLE_DIST) {
+		current_obj_det = 1; //true
+		// printf("Obastacle found %d!\n", obstacle_dist);
+	} else {
+		// printf("Obastacle not found %d!\n", obstacle_dist);
+		current_obj_det = 0; //false
+	}
+
+	//block the car if object is found
+	if(current_obj_det == 1 && c->last_object_detected == 0) {
+		printf("BLOCKING THE CAR!!!\n");
+		serial_send(ENGINE_ID, 0);
+		serial_send(SERVO_ID, NOT_CHANGE);
+	}
+
+	//update object detected
+	c->last_object_detected = current_obj_det;
+	
+	// printf("Ricevuto valore del sensore di prossimita': %d\n", c->sens_dist_val);
+
+	sem_post(&c->acc_serial_out);
 }
 
 void sensor_bridge() {
 
 	long int current, start;
 	int i = 0;
-	int componentId, componentValue;
 	
 	while(1) {
 		start = get_time_ms();
@@ -525,8 +571,7 @@ void sensor_bridge() {
 			//read
 			printf("%d data available\n", serialDataAvail(fd_serial));
 			while (serialDataAvail(fd_serial) != 0) {
-				receive_sensor_data(componentId, componentValue);
-				printf("Ricevuto valore del sensore di prossimita': %ld\n", componentValue);
+				serial_receive(&components_handler);
 			}
 		}
 		
@@ -609,11 +654,30 @@ void calc_movement(struct detection_handler_t *d, int& servo_val, int& engine_va
 	cout << "servo_val: " << servo_val << endl;
 }
 
-void send_movement(int componentId, int componentValue) {
+void serial_send(int componentId, int componentValue) {
 	char ser_message[SER_MESS_LENGTH];
 
-	sprintf(ser_message, "<%d:%d>", componentId, componentValue);
-	serialPuts(fd_serial, ser_message);
+	//with a negative number we keep the component unchanged
+	if(componentValue >= 0) {
+		sprintf(ser_message, "<%d:%d>", componentId, componentValue);
+		serialPuts(fd_serial, ser_message);
+	}
+	
+}
+
+void send_movement(struct components_handler_t *c, int servo_val, int engine_val) {
+
+	sem_wait(&c->acc_serial_out);
+
+	//update the movement path (only if an object is not detected)
+	if(c->last_object_detected == 0) {
+		serial_send(ENGINE_ID, engine_val);
+		serial_send(SERVO_ID, servo_val);
+	} else {
+		printf("NON POSSO, MACCHINA BLOCCATA\n");
+	}
+
+	sem_post(&c->acc_serial_out);
 }
 
 //periodic task - moves the car using the parameters calculated by the other tasks
@@ -626,7 +690,17 @@ void check_move() {
 		start = get_time_ms();		
 
 		calc_movement(&detection_handler, servo_val, engine_val);
-		send_movement(2, servo_val);
+
+
+		// if(checkObstacle(&sensors_val) == 0) {  														//DA CAMBIARE
+		// 	//obstacle si not present, we continue
+		// 	send_movement(servo_val, engine_val);
+		// } else {
+		// 	//obstacle si present, we stop
+		// 	send_movement(NOT_CHANGE, 0);
+		// }
+
+		send_movement(&components_handler, servo_val, engine_val);
 
 		current = get_time_ms();
 
