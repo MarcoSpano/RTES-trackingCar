@@ -8,9 +8,8 @@ using namespace cv;
 
 //ptask defines
 #define PER 100
-#define DREL 110
+#define DREL 100
 #define PRIO 80
-#define SER_MESS_LENGTH 20
 
 //opencv defines
 #define CANNY_MIN_THRESH 50
@@ -20,7 +19,9 @@ using namespace cv;
 #define MIN_RADIUS 4
 #define MAX_RADIUS 40
 
+//serial
 int fd_serial;
+#define SER_MESS_LENGTH 10
 
 //physical components values
 #define NOT_CHANGE -1
@@ -28,15 +29,17 @@ int fd_serial;
 #define MIN_OBSTACLE_DIST 10
 #define ENGINE_ID 1
 #define SERVO_ID 2
-#define SERVO_RANGE 100
-#define SERVO_OFFSET 40
+#define SERVO_RANGE 80
+#define SERVO_CENTER 90
 
+//range for color detection
 int H_MIN = 120;
 int H_MAX = 155;
 int S_MIN = 97;
 int S_MAX = 256;
 int V_MIN = 32;
 int V_MAX = 159;
+
 //default capture width and height
 const int FRAME_WIDTH = 640;
 const int FRAME_HEIGHT = 480;
@@ -52,7 +55,7 @@ VideoWriter out_capture;
 
 //DEBUG
 VideoWriter threshold_debug;
-VideoWriter circles_debug;
+// VideoWriter circles_debug;
 
 long int start;
 
@@ -127,7 +130,7 @@ void init() {
 	out_capture.open("4video_car.avi", VideoWriter::fourcc('M','J','P','G'), 1000/PER, Size(640,480));
 	//DEBUG
 	threshold_debug.open("4debug.avi", VideoWriter::fourcc('M','J','P','G'), 1000/PER, Size(640,480));
-	circles_debug.open("4debugcirc.avi", VideoWriter::fourcc('M','J','P','G'), 1000/PER, Size(640,480));
+	// circles_debug.open("4debugcirc.avi", VideoWriter::fourcc('M','J','P','G'), 1000/PER, Size(640,480));
 
 	//opens and initializes serial connection
 	if ((fd_serial = serialOpen ("/dev/ttyUSB0", 9600)) < 0)
@@ -222,7 +225,7 @@ void frame_acquisition() {
 		current = get_time_ms();
 
 		i++;
-		cout << "frame acquisition: " << current-start << " ms, frame n. " << i << "\n";
+		//cout << "frame acquisition: " << current-start << " ms, frame n. " << i << "\n";
 
 		ptask_wait_for_period();
 	}
@@ -258,7 +261,7 @@ void store_video() {
 		current = get_time_ms();
 
 		i++;
-		cout << "store video: " << current-start << " ms, frame n. " << i << "\n";
+		//cout << "store video: " << current-start << " ms, frame n. " << i << "\n";
 
 		ptask_wait_for_period();
 	}
@@ -288,7 +291,7 @@ void morphOps(Mat &thresh){
 
 }
 
-void trackFilteredObject(int &x, int &y, Mat threshold){
+bool trackFilteredObject(int &x, int &y, Mat threshold){
 
 	Mat temp;
 	threshold.copyTo(temp);
@@ -318,16 +321,16 @@ void trackFilteredObject(int &x, int &y, Mat threshold){
 					y = moment.m01/area;
 					objectFound = true;
 					refArea = area;
+					//cout << "TEMP " << index << ":\n	X: " << x << "\n	Y: " << y << endl; //TRACK DEBUG
 				}
 
-				cout << "TEMP " << index << ":\n	X: " << x << "\n	Y: " << y << endl;
+				
 			}
-			//let user know you found an object
-			if(objectFound ==true)
-				cout << "object found";
 
-		}else cout << "TOO MUCH NOISE! ADJUST FILTER";
+		} else ;//cout << "TOO MUCH NOISE! ADJUST FILTER";
 	}
+
+	return objectFound;
 }
 
 
@@ -412,7 +415,7 @@ void detect_color() {
 		current = get_time_ms();
 
 		i++;
-		cout << "detect color: " << current-start << " ms, frame n. " << i << "\n";
+		//cout << "detect color: " << current-start << " ms, frame n. " << i << "\n";
 		fflush(stdout);
 
 		ptask_wait_for_period();
@@ -420,81 +423,81 @@ void detect_color() {
 }
 
 //preprocess of the frame
-void circles_detection(struct handler_t *h, struct detection_handler_t *d) {
-	//int x = 0, y = 0;
+// void circles_detection(struct handler_t *h, struct detection_handler_t *d) {
+// 	//int x = 0, y = 0;
 
-	Mat local_frame, gray, edges, debugss;
-	Mat circles_thresh(FRAME_HEIGHT, FRAME_WIDTH, CV_8UC1, Scalar(0));
-	vector<Vec3f> circles_detected;
+// 	Mat local_frame, gray, edges, debugss;
+// 	Mat circles_thresh(FRAME_HEIGHT, FRAME_WIDTH, CV_8UC1, Scalar(0));
+// 	vector<Vec3f> circles_detected;
 
-	sem_wait(&h->acc_frame);
+// 	sem_wait(&h->acc_frame);
 
-	// local_frame = h->frame.clone();
-	h->frame.copyTo(local_frame);
+// 	// local_frame = h->frame.clone();
+// 	h->frame.copyTo(local_frame);
 	
 
-	sem_post(&h->acc_frame);
+// 	sem_post(&h->acc_frame);
 
-	//DEBUG
-	if(local_frame.empty()) 
-			printf("\n\n\n\nlocal frame circles EMPTY");
-	fflush(stdout);
+// 	//DEBUG
+// 	if(local_frame.empty()) 
+// 			printf("\n\n\n\nlocal frame circles EMPTY");
+// 	fflush(stdout);
+// /*
+// 	cvtColor(local_frame, gray, COLOR_BGR2GRAY);
 
-	cvtColor(local_frame, gray, COLOR_BGR2GRAY);
+// 	Canny(gray, edges, CANNY_MIN_THRESH, CANNY_MAX_THRESH, 3);
+// 	HoughCircles(edges, circles_detected, HOUGH_GRADIENT, 1, MIN_CIRCLE_DIST, CANNY_MAX_THRESH, CIRCLE_THRESH, MIN_RADIUS, MAX_RADIUS);
 
-	Canny(gray, edges, CANNY_MIN_THRESH, CANNY_MAX_THRESH, 3);
-	HoughCircles(edges, circles_detected, HOUGH_GRADIENT, 1, MIN_CIRCLE_DIST, CANNY_MAX_THRESH, CIRCLE_THRESH, MIN_RADIUS, MAX_RADIUS);
+// 	//drawing the detected circles on a blank image, to create the 'threshold'
+// 	for (size_t i = 0; i < circles_detected.size(); i++)
+// 	{
+// 		Point tmp_center(cvRound(circles_detected[i][0]), cvRound(circles_detected[i][1]));
+// 		int tmp_radius = cvRound(circles_detected[i][2]);
 
-	//drawing the detected circles on a blank image, to create the 'threshold'
-	for (size_t i = 0; i < circles_detected.size(); i++)
-	{
-		Point tmp_center(cvRound(circles_detected[i][0]), cvRound(circles_detected[i][1]));
-		int tmp_radius = cvRound(circles_detected[i][2]);
+// 		circle(circles_thresh, tmp_center, tmp_radius, Scalar(255), -1, 8, 0);
+// 	}
 
-		circle(circles_thresh, tmp_center, tmp_radius, Scalar(255), -1, 8, 0);
-	}
+// 	cvtColor(circles_thresh, debugss, COLOR_GRAY2BGR);
+// 		circles_debug.write(debugss);
 
-	cvtColor(circles_thresh, debugss, COLOR_GRAY2BGR);
-		circles_debug.write(debugss);
+// 	sem_wait(&d->det_sem);
 
-	sem_wait(&d->det_sem);
+// 	circles_thresh.copyTo(d->circles_thresh);
+// 	// d->circles_thresh = circles_thresh.clone();
 
-	circles_thresh.copyTo(d->circles_thresh);
-	// d->circles_thresh = circles_thresh.clone();
+// 	if(d->circles_ready == 0) {
+// 		//notify the movement task that my part is ready
+// 		d->circles_ready = 1;
+// 		sem_post(&d->priv_circ);
+// 	}
 
-	if(d->circles_ready == 0) {
-		//notify the movement task that my part is ready
-		d->circles_ready = 1;
-		sem_post(&d->priv_circ);
-	}
+// 	sem_post(&d->det_sem);
+// 	*/
+// 	//cvtColor(threshold, gray, COLOR_GRAY2BGR);
 
-	sem_post(&d->det_sem);
-	
-	//cvtColor(threshold, gray, COLOR_GRAY2BGR);
-
-}
+// }
 
 //
-void detect_circles() {
+// void detect_circles() {
 
-	long int current, start;
-	int i = 0;
+// 	long int current, start;
+// 	int i = 0;
 	
-	while(1) {
-		start = get_time_ms();
-		//cout << "pigliaml il frame\n";
+// 	while(1) {
+// 		start = get_time_ms();
+// 		//cout << "pigliaml il frame\n";
 
-		circles_detection(&handler, &detection_handler);
+// 		circles_detection(&handler, &detection_handler);
 		
-		current = get_time_ms();
+// 		current = get_time_ms();
 
-		i++;
-		cout << "detect circ: " << current-start << " ms, frame n. " << i << "\n";
-		fflush(stdout);
+// 		i++;
+// 		//cout << "detect circ: " << current-start << " ms, frame n. " << i << "\n";
+// 		fflush(stdout);
 
-		ptask_wait_for_period();
-	}
-}
+// 		ptask_wait_for_period();
+// 	}
+// }
 
 void serial_receive(struct components_handler_t *c) {
 	char input_sensor [INPUT_SENSOR_LENGTH];
@@ -506,14 +509,19 @@ void serial_receive(struct components_handler_t *c) {
 
 	input_sensor[INPUT_SENSOR_LENGTH - 1] = 0;
 
+	sem_wait(&c->acc_serial_out);
+	printf("SENSOR leggo \n");
+
 	//clean up the serial from bad data
 	while(next_char == 0 || next_char == '\n') {
 		next_char = serialGetchar(fd_serial);
+		printf("%d ", next_char);
 	}
 
 	//populate the input array with the values from our serial
 	while((next_char >= '0' && next_char <= '9') && i < INPUT_SENSOR_LENGTH - 1) {
 		input_sensor[i] = next_char;
+		printf("%d ", next_char);
 
 		next_char = serialGetchar(fd_serial);
 		i++;
@@ -522,30 +530,44 @@ void serial_receive(struct components_handler_t *c) {
 			printf("Errore nell'acquisizione del sensore, il messaggio supera il buffer\n");
 		}
 	}
+
+	printf("\n");
 	
 	input_sensor[i] = 0; //close the string
+
+	// printf("\n\n %s \n", input_sensor);
 	
 	sensor_value = strtol(input_sensor, &eptr, 10);
 
 	//insert and elaborate
-	sem_wait(&c->acc_serial_out);
+
 
 	c->sens_dist_val = (int) sensor_value;
 
+	//printf("il sensore ha trovato: %d\n\n\n", sensor_value);
 
-	if(c->sens_dist_val <= MIN_OBSTACLE_DIST) {
+
+	if(sensor_value <= MIN_OBSTACLE_DIST) {
 		current_obj_det = 1; //true
-		// printf("Obastacle found %d!\n", obstacle_dist);
+		//printf("Obastacle found %d!\n\n\n\n\n\n\n\n\n\n", sensor_value);
 	} else {
-		// printf("Obastacle not found %d!\n", obstacle_dist);
+		// if(sensor_value != 0)
+		// 	printf("Obastacle not found %d!\n", sensor_value);
+		// else
+		// {
+		// 	printf("riga 555\n");
+		// }
+		
 		current_obj_det = 0; //false
 	}
 
 	//block the car if object is found
 	if(current_obj_det == 1 && c->last_object_detected == 0) {
-		printf("BLOCKING THE CAR!!!\n");
-		serial_send(ENGINE_ID, 0);
+		//printf("BLOCKING THE CAR!!!\n");
+		//serial_send(ENGINE_ID, 0);
 		serial_send(SERVO_ID, NOT_CHANGE);
+	} else {
+;	// 	printf("curr: %d, last: %d\n", current_obj_det, c->last_object_detected);
 	}
 
 	//update object detected
@@ -554,6 +576,7 @@ void serial_receive(struct components_handler_t *c) {
 	// printf("Ricevuto valore del sensore di prossimita': %d\n", c->sens_dist_val);
 
 	sem_post(&c->acc_serial_out);
+	// printf("SENSOR lascio \n");
 }
 
 void sensor_bridge() {
@@ -566,13 +589,16 @@ void sensor_bridge() {
 		//cout << "pigliaml il frame\n";
 
 		if(serialDataAvail(fd_serial) == -1) {
-			//printf("error\n");
+			printf("serial error\n");
 		} else {
 			//read
 			printf("%d data available\n", serialDataAvail(fd_serial));
-			while (serialDataAvail(fd_serial) != 0) {
+			while (serialDataAvail(fd_serial) >= SER_MESS_LENGTH) {
+				printf("leggo\n");
 				serial_receive(&components_handler);
 			}
+
+			// printf("finito di leggere la seriale\n");
 		}
 		
 		current = get_time_ms();
@@ -586,72 +612,84 @@ void sensor_bridge() {
 }
 
 //calculate the values of the servo 
-void calc_movement(struct detection_handler_t *d, int& servo_val, int& engine_val) {
+bool calc_movement(struct detection_handler_t *d, int& servo_val, int& engine_val) {
 
-	int x, y;
-	Mat local_col_thresh, local_circ_thresh, bitwise_thresh;
+	int x = FRAME_WIDTH / 2, y;
+	bool objectFound = false;
+	Mat local_col_thresh;//, local_circ_thresh, bitwise_thresh;
 
 	//wait for circles and color threshold to be ready
-	sem_wait(&d->priv_circ);
+	//sem_wait(&d->priv_circ);						//tolgo parte cerchi
 	sem_wait(&d->priv_col);
 
 	sem_wait(&d->det_sem);
 
 	//DEBUG
-	if(d->circles_ready == 0 || d->color_ready == 0)
-		printf("NON DOVREI ESSERE QUI\n\n");
+	// if(d->circles_ready == 0 || d->color_ready == 0)
+	// 	printf("NON DOVREI ESSERE QUI\n\n");
 
 	//consume their part
-	d->circles_ready = 0;
+	// d->circles_ready = 0;														//tolgo parte cerchi
 	d->color_ready = 0;
 
-	printf("color and threshold part is ready!!!\n\n\n\n\n");
-	fflush(stdout);
+	// printf("color and threshold part is ready!!!\n\n\n\n\n");
+	// fflush(stdout);
 
 //DEBUG
 	if(d->color_thresh.empty())
 		printf("Malisssssssssimo\n\n\n\n\n");
-	if(d->circles_thresh.empty())
-		printf("Malisssssssssimo\n\n\n\n\n");
+	// if(d->circles_thresh.empty())
+	// 	printf("Malisssssssssimo\n\n\n\n\n");
 
 
 	// local_col_thresh = d->color_thresh.clone();
 	// local_circ_thresh = d->circles_thresh.clone();
 	d->color_thresh.copyTo(local_col_thresh);
-	d->circles_thresh.copyTo(local_circ_thresh);
+	// d->circles_thresh.copyTo(local_circ_thresh);														//tolgo parte cerchi
 
 	sem_post(&d->det_sem);
 	
 //DEBUG
 	if(local_col_thresh.empty()) 
 			printf("\n\n\n\nlocal col EMPTY");
-	if(local_circ_thresh.empty()) 
-			printf("\n\n\n\nlocal circ EMPTY");
+	// if(local_circ_thresh.empty())														//tolgo parte cerchi
+	// 		printf("\n\n\n\nlocal circ EMPTY");
 	
-	printf("prima del bitwise\n\n\n\n\n");
-	fflush(stdout);
-	bitwise_and(local_col_thresh, local_circ_thresh, bitwise_thresh);
-	printf("dopo il bitwise\n\n\n\n\n");
+	// printf("prima del bitwise\n\n\n\n\n");															//tolgo parte cerchi
+	// fflush(stdout);
+	// bitwise_and(local_col_thresh, local_circ_thresh, bitwise_thresh);
+	// printf("dopo il bitwise\n\n\n\n\n");
 
 	//DEBUG
 		Mat gray;
 
-		if(bitwise_thresh.empty()) 
-			printf("\n\n\n\nBITWISE EMPTY");
-			fflush(stdout);
-		cvtColor(bitwise_thresh, gray, COLOR_GRAY2BGR);
-		imwrite("bitwise.jpg", gray);
+		// if(bitwise_thresh.empty()) 														//tolgo parte cerchi
+		// 	printf("\n\n\n\nBITWISE EMPTY");
+		// 	fflush(stdout);
+		// cvtColor(bitwise_thresh, gray, COLOR_GRAY2BGR);														//tolgo parte cerchi
+		// 																			cvtColor(local_col_thresh, gray, COLOR_GRAY2BGR);
+		// imwrite("bitwise.jpg", gray);
 
 
-	morphOps(bitwise_thresh);
-	printf("ricerca dell'oggetto\n\n");
+	// morphOps(bitwise_thresh);														//tolgo parte cerchi
+																					morphOps(local_col_thresh);
+	//printf("ricerca dell'oggetto\n\n");
 	fflush(stdout);
 	
-	trackFilteredObject(x, y, bitwise_thresh);
-
-	servo_val = ((int)(x * SERVO_RANGE / FRAME_WIDTH)) + SERVO_OFFSET;
-
-	cout << "servo_val: " << servo_val << endl;
+	// trackFilteredObject(x, y, bitwise_thresh);														//tolgo parte cerchi
+																					objectFound = trackFilteredObject(x, y, local_col_thresh);
+	
+	// servo_val = ((int)(x / FRAME_WIDTH) * SERVO_RANGE) + SERVO_CENTER;
+	if(objectFound) {
+		servo_val = (x * SERVO_RANGE)  / FRAME_WIDTH;
+		servo_val -= (SERVO_RANGE / 2); //move the val in a range of -(range/2) | +(range/2)
+		servo_val += SERVO_CENTER;
+		engine_val = 255;
+		cout << "X trovata: " << x << " servo_val: " << servo_val << endl;
+	} else 
+		cout << "object not found" << endl;
+	
+	return objectFound;
 }
 
 void serial_send(int componentId, int componentValue) {
@@ -661,35 +699,47 @@ void serial_send(int componentId, int componentValue) {
 	if(componentValue >= 0) {
 		sprintf(ser_message, "<%d:%d>", componentId, componentValue);
 		serialPuts(fd_serial, ser_message);
+		printf("%s\n", ser_message);
 	}
 	
 }
 
 void send_movement(struct components_handler_t *c, int servo_val, int engine_val) {
 
+
 	sem_wait(&c->acc_serial_out);
+	// printf("MOVE prendo \n");
 
 	//update the movement path (only if an object is not detected)
 	if(c->last_object_detected == 0) {
 		serial_send(ENGINE_ID, engine_val);
-		serial_send(SERVO_ID, servo_val);
+		
+		if(servo_val >= SERVO_CENTER - (SERVO_RANGE / 2) && servo_val <= SERVO_CENTER + (SERVO_RANGE / 2)) {
+			printf("muovo servo a %d\n", servo_val);
+			serial_send(SERVO_ID, servo_val);	
+		}
+		else
+			printf("ERRORE: servo value not valid %d\n", servo_val);
+
 	} else {
 		printf("NON POSSO, MACCHINA BLOCCATA\n");
 	}
 
 	sem_post(&c->acc_serial_out);
+	// printf("MOVE lascio \n");
 }
 
 //periodic task - moves the car using the parameters calculated by the other tasks
 void check_move() {
 
 	long int current, start;
+	bool objectFound;
 	int i = 0, servo_val = 0, engine_val = 0;
 	while(1) {
 		//cout << "pigliaml il frame\n";
 		start = get_time_ms();		
 
-		calc_movement(&detection_handler, servo_val, engine_val);
+		objectFound = calc_movement(&detection_handler, servo_val, engine_val);
 
 
 		// if(checkObstacle(&sensors_val) == 0) {  														//DA CAMBIARE
@@ -699,13 +749,17 @@ void check_move() {
 		// 	//obstacle si present, we stop
 		// 	send_movement(NOT_CHANGE, 0);
 		// }
-
-		send_movement(&components_handler, servo_val, engine_val);
+		if(objectFound) {
+			send_movement(&components_handler, servo_val, engine_val);
+		} else {
+			send_movement(&components_handler, SERVO_CENTER, 0);
+		}
+		
 
 		current = get_time_ms();
 
 		i++;
-		cout << "move: " << current-start << " ms, frame n. " << i << "\n";
+		//cout << "move: " << current-start << " ms, frame n. " << i << "\n";
 
 		ptask_wait_for_period();
 	}
@@ -720,6 +774,7 @@ void create_tasks() {
     tpars param;
 	tpars mover_prm;
 	tpars param_sec;
+	tpars sensor;
 	int ret;
 
     init();
@@ -746,53 +801,28 @@ void create_tasks() {
 	mover_prm.act_flag = NOW;
 
 	ret = ptask_create_param(frame_acquisition, &param);
-
-	fflush(stdout);
 	if(ret == -1)
 		printf("Error during the creation of the tasks\n");
-	else
-		printf("%i\n", ret);
 	
 	ret = ptask_create_param(store_video, &param);
-
-	fflush(stdout);
 	if(ret == -1)
 		printf("Error during the creation of the tasks\n");
-	else
-		printf("%i\n", ret);
 
 	ret = ptask_create_param(detect_color, &param);
-
-	fflush(stdout);
 	if(ret == -1)
 		printf("Error during the creation of the tasks\n");
-	else
-		printf("%i\n", ret);
 
-	ret = ptask_create_param(detect_circles, &param);
-
-	fflush(stdout);
-	if(ret == -1)
-		printf("Error during the creation of the tasks\n");
-	else
-		printf("%i\n", ret);
-
+	// ret = ptask_create_param(detect_circles, &param);
+	// if(ret == -1)
+	// 	printf("Error during the creation of the tasks\n");
 	
 	//create the task that checks the sensors
 	ret = ptask_create_param(sensor_bridge, &mover_prm);
-
-	fflush(stdout);
 	if(ret == -1)
 		printf("Error during the creation of the tasks\n");
-	else
-		printf("%i\n", ret);
 
 	//create the task that moves the car
 	ret = ptask_create_param(check_move, &mover_prm);
-
-	fflush(stdout);
 	if(ret == -1)
 		printf("Error during the creation of the tasks\n");
-	else
-		printf("%i\n", ret);
 }
