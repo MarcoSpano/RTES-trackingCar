@@ -16,6 +16,7 @@
 //ptask library
 extern "C" {
     #include "ptask.h"
+    #include "tstat.h"
 }
 
 //opencv libraries 
@@ -30,8 +31,10 @@ using namespace cv;
 long int get_time_ms();
 
 void init();
-
 void init_handlers(struct handler_t *h, struct components_handler_t *c, struct detection_handler_t *d);
+void close_app();
+void app_error(char *f, char *msg);
+
 void get_frame(struct handler_t *h);
 void frame_acquisition();
 void store_frame(struct handler_t *h);

@@ -6,10 +6,19 @@
 using namespace std;
 using namespace cv;
 
-//ptask defines
-#define PER 100
-#define DREL 100
-#define PRIO 80
+//task defines
+#define WAIT_BEFORE_CLOSE 500
+#define NUM_TASKS 5
+#define STORE_PER 150
+#define STORE_PRIO 70	//low priority
+#define SENSOR_PER 10
+#define SENSOR_PRIO 99	//max priority
+#define FRAME_PER 150
+#define FRAME_PRIO 99	//max priority
+#define DETECT_PER 150
+#define DETECT_PRIO 90	//high priority
+#define MOVE_PER 150
+#define MOVE_PRIO 80	//mid priority
 
 //opencv defines
 #define CANNY_MIN_THRESH 50
@@ -22,14 +31,15 @@ using namespace cv;
 //serial
 int fd_serial;
 #define SER_MESS_LENGTH 10
+#define BAUD_RATE 9600
 
 //physical components values
 #define NOT_CHANGE -1
 #define INPUT_SENSOR_LENGTH 10
-#define MIN_OBSTACLE_DIST 10
+#define MIN_OBSTACLE_DIST 25
 #define ENGINE_ID 1
 #define SERVO_ID 2
-#define SERVO_RANGE 80
+#define SERVO_RANGE 30 //80 is the maximum for the chassis limitations
 #define SERVO_CENTER 90
 
 //range for color detection
@@ -58,6 +68,7 @@ VideoWriter threshold_debug;
 // VideoWriter circles_debug;
 
 long int start;
+int ret[NUM_TASKS];
 
 long int get_time_ms()
 {
@@ -77,6 +88,12 @@ struct handler_t {
 
     //frame taken from the camera
     Mat frame;
+
+	Mat detect_frame;
+
+	int newFrame;
+	int newFrame2Det;
+	int newDetection;
 
     // semafori privati
     // sem_t priv_pizzaiolo;
@@ -107,12 +124,18 @@ struct components_handler_t {
     sem_t acc_serial_out;
 
     int sens_dist_val;
-	int last_object_detected;
+	int last_obstacle_detected;
 
 } components_handler;
 
+/**
+ * 
+ * 
+ */
 void init() {
-    ptask_init(SCHED_RR, GLOBAL, NO_PROTOCOL);
+	Mat tmp;
+
+    ptask_init(SCHED_FIFO, GLOBAL, PRIO_CEILING);
 	
 	init_handlers(&handler, &components_handler, &detection_handler);
 
@@ -121,28 +144,33 @@ void init() {
 
     if (!cap.isOpened()) {
         cerr << "ERROR! Unable to open camera\n";
-        
+        exit(-1);
     }
 	
+	// cout << "prima: width - " << cap.get(CAP_PROP_FRAME_WIDTH) << " height: " << cap.get(CAP_PROP_FRAME_HEIGHT) << " buffer: " << cap.get(CAP_PROP_BUFFERSIZE) << endl;
+
 	cap.set(CAP_PROP_FRAME_WIDTH,FRAME_WIDTH);
 	cap.set(CAP_PROP_FRAME_HEIGHT,FRAME_HEIGHT);
+	cap.set(CAP_PROP_BUFFERSIZE, 1); // internal buffer will now store only 1 frame
+
+	// cout << "DOPO: width - " << cap.get(CAP_PROP_FRAME_WIDTH) << " height: " << cap.get(CAP_PROP_FRAME_HEIGHT) << " buffer: " << cap.get(CAP_PROP_BUFFERSIZE) << endl;
 	
-	out_capture.open("4video_car.avi", VideoWriter::fourcc('M','J','P','G'), 1000/PER, Size(640,480));
+	out_capture.open("4video_car.avi", VideoWriter::fourcc('M','J','P','G'), 1000 / STORE_PER, Size(FRAME_WIDTH, FRAME_HEIGHT));
 	//DEBUG
-	threshold_debug.open("4debug.avi", VideoWriter::fourcc('M','J','P','G'), 1000/PER, Size(640,480));
+	threshold_debug.open("4debug.avi", VideoWriter::fourcc('M','J','P','G'), 1000 / STORE_PER, Size(FRAME_WIDTH, FRAME_HEIGHT));
 	// circles_debug.open("4debugcirc.avi", VideoWriter::fourcc('M','J','P','G'), 1000/PER, Size(640,480));
 
 	//opens and initializes serial connection
-	if ((fd_serial = serialOpen ("/dev/ttyUSB0", 9600)) < 0)
+	if ((fd_serial = serialOpen ("/dev/ttyUSB0", BAUD_RATE)) < 0)
 	{
 		fprintf (stderr, "Unable to open serial device: %s\n", strerror (errno)) ;
-		
+		exit(-1);
 	}
 
 	if (wiringPiSetup () == -1)
 	{
 		fprintf (stdout, "Unable to start wiringPi: %s\n", strerror (errno)) ;
-		
+		exit(-1);
 	}
 
 	//let's flush before start
@@ -150,7 +178,9 @@ void init() {
 	fflush(stdin);
 	fflush(stdout);
 
-	start = get_time_ms();
+	
+	
+	cap.read(tmp);
 }
 
 /* inizializzazione della struttura condivisa */
@@ -163,11 +193,64 @@ void init_handlers(struct handler_t *h, struct components_handler_t *c, struct d
 	sem_init(&d->priv_col,0,0);
 	sem_init(&d->priv_circ,0,0);
 
+	h->newFrame = 0;
+	h->newFrame2Det = 0;
+	h->newDetection = 0;
+
 	d->color_ready = 0;
 	d->circles_ready = 0;
 
 	c->sens_dist_val = 0;
-	c->last_object_detected = 1;
+	c->last_obstacle_detected = 1;
+}
+
+void app_error(char *f, char *msg) {
+
+	struct components_handler_t *c = &components_handler;
+	sem_wait(&c->acc_serial_out);
+
+	//put the actuators to default values
+	serial_send(ENGINE_ID, 0);
+	serial_send(SERVO_ID, SERVO_CENTER);
+
+	ptask_syserror(f, msg);
+}
+
+void close_app() {
+	int i;
+	tspec wc_et[NUM_TASKS], avg_et[NUM_TASKS];
+	struct handler_t *h = &handler;
+	struct components_handler_t *c = &components_handler;
+	struct detection_handler_t *d = &detection_handler;
+
+	//take all the semaphore to block the tasks
+	
+	sem_wait(&c->acc_serial_out);
+	//put the actuators to default values
+	serial_send(ENGINE_ID, 0);
+	serial_send(SERVO_ID, SERVO_CENTER);
+
+	sem_wait(&h->acc_frame);
+	sem_wait(&d->det_sem);
+
+	// //wait some time to block all the tasks
+	usleep(WAIT_BEFORE_CLOSE);
+
+	//close the videos
+	out_capture.release();
+	threshold_debug.release();
+	
+	printf("Time measurements approximated\n");
+	for(i = 0; i < NUM_TASKS; i++) {
+		wc_et[i] = ptask_get_wcet(ret[i]);
+		// avg_et[i] = ptask_get_avg(ret[i]);
+
+		printf("\nTask id %d:\nworst case execution time: %ld\n", i, tspec_to(&wc_et[i], MILLI));
+		// printf(tspec_to(ptask_get_wcet(ret[i]), MILLI));
+		// printf("average case execution time: %ld\n", tspec_to(&avg_et[i], MILLI));
+		// printf(tspec_to(ptask_get_avg(ret[i]), MILLI));
+	}
+	fflush(stdout);
 }
 
 // int checkObstacle(struct sensors_val_t *s) {
@@ -193,19 +276,23 @@ void init_handlers(struct handler_t *h, struct components_handler_t *c, struct d
 //get a frame from the camera and stores it in matrix 'frame'
 void get_frame(struct handler_t *h) {
 
+	Mat tmp;
+
+	cap.read(tmp);
+
 	sem_wait(&h->acc_frame);
 
-	cap.read(h->frame);
+	tmp.copyTo(h->frame);
+	h->newFrame = 1;
+	h->newFrame2Det = 1;
 
-	//cout << "magari\n";
+	printf("newframe: %d", h->newFrame);
 
 	// check if we succeeded
-	if (h->frame.empty()) {
-		cerr << "ERROR! blank frame grabbed\n";
-		//break;
-
-		//TO-DO codice per fermare la macchinina (fare una funzione di error)
+	if (h->frame.empty()) {		
+		app_error((char *) "get_frame", (char *) "ERROR! blank frame grabbed");
 	}
+
 
 	sem_post(&h->acc_frame);
 }
@@ -214,18 +301,20 @@ void get_frame(struct handler_t *h) {
 void frame_acquisition() {
 
 	long int current, start;
-	int i = 0;
+	// int i = 0;
+
+	// ptask_wait_for_activation();
 	
 	while(1) {
 		//cout << "pigliaml il frame\n";
-		start = get_time_ms();
+		 start = get_time_ms();
 
 		get_frame(&handler);
 		
-		current = get_time_ms();
+		 current = get_time_ms();
 
-		i++;
-		//cout << "frame acquisition: " << current-start << " ms, frame n. " << i << "\n";
+		// i++;
+		cout << "frame acquisition: " << current-start << " ms, frame n. ";// << i << "\n";
 
 		ptask_wait_for_period();
 	}
@@ -235,15 +324,33 @@ void frame_acquisition() {
 void store_frame(struct handler_t *h) {
 
 	Mat local_frame;
+	Mat local_det_frame;
+	int newFrame;
+	int newDetection;
 
 	sem_wait(&h->acc_frame);
 
-	// local_frame = h->frame.clone();
-	h->frame.copyTo(local_frame);
+	//consume the new frame, if it is present
+	newFrame = h->newFrame;
+	h->newFrame = 0;
+	newDetection = h->newDetection;
+	h->newDetection = 0;
+
+	if(newFrame == 1)
+		h->frame.copyTo(local_frame);
+	if(newDetection == 1)
+		h->detect_frame.copyTo(local_det_frame);
 
 	sem_post(&h->acc_frame);
 	
-	out_capture.write(h->frame);
+	if(newFrame == 1)
+		out_capture.write(local_frame);
+	else
+		printf("frame vecchio, salto %d\n", newFrame);
+	if(newDetection == 1)
+		threshold_debug.write(local_det_frame);
+	else
+		printf("frame vecchio debug, salto\n");
 
 }
 
@@ -251,17 +358,19 @@ void store_frame(struct handler_t *h) {
 void store_video() {
 
     long int current, start;
-	int i = 0;
+	// int i = 0;
+
+	// ptask_wait_for_activation();
 
 	while(1) {
-		start = get_time_ms();
+		// start = get_time_ms();
 		
 		store_frame(&handler);
 
-		current = get_time_ms();
+		// current = get_time_ms();
 
-		i++;
-		//cout << "store video: " << current-start << " ms, frame n. " << i << "\n";
+		// i++;
+		// cout << "store video: " << current-start << " ms, frame n. " << i << "\n";
 
 		ptask_wait_for_period();
 	}
@@ -338,85 +447,102 @@ bool trackFilteredObject(int &x, int &y, Mat threshold){
 //preprocess of the frame
 void preproc_detect(struct handler_t *h, struct detection_handler_t *d) {
 	//int x = 0, y = 0;
+	int newFrame2Det;
 
 	//DEBUG gray
 	Mat local_frame, HSV, color_thresh, gray;
 
 	sem_wait(&h->acc_frame);
 
-	// local_frame = h->frame.clone();
-	h->frame.copyTo(local_frame);
+	newFrame2Det = h->newFrame2Det;
+	h->newFrame2Det = 0;
+
+	if(newFrame2Det == 1)
+		h->frame.copyTo(local_frame);
 
 	sem_post(&h->acc_frame);
 
 	//DEBUG
-	if(local_frame.empty()) 
-			printf("\n\n\n\nlocal frame COLOR EMPTY");
-
-	fflush(stdout);
-
-	//convert frame from BGR to HSV colorspace
-	cvtColor(local_frame, HSV, COLOR_BGR2HSV);
-	inRange(HSV, Scalar(H_MIN, S_MIN, V_MIN), Scalar(H_MAX, S_MAX, V_MAX), color_thresh);
-	
-	//morphOps(threshold);
-	
-	// trackFilteredObject(x, y, threshold, local_frame);
-
-	//DEBUG
-		cvtColor(color_thresh, gray, COLOR_GRAY2BGR);
-		threshold_debug.write(gray);
-
-	//imwrite("test.jpg", local_frame);
-
-	//cout << "FINAL:\nX: " << x << "\nY: " << y << endl;
-	
-	if(color_thresh.empty()) 
-			printf("\n\n\n\nsONO IO CHE GLIELO DO VUOTO\n");
-
-	fflush(stdout);
-	
-
-	sem_wait(&d->det_sem);
-
-	color_thresh.copyTo(d->color_thresh);
-
-	if(d->color_thresh.empty()) 
-		printf("\n\n\n\nCopia sbagliata?\n");
-
-	fflush(stdout);
-
-	
-	if(d->color_ready == 0) {
-		//my part is ready, waking up the task that calculates movement
-		d->color_ready = 1;
-		sem_post(&d->priv_col);
-	}
+	if(newFrame2Det == 0) 
+		printf("\n\n\n\nlocal frame COLOR EMPTY");
+	else
+	{
+		
 		
 
-	sem_post(&d->det_sem);
-	
-	//cvtColor(threshold, gray, COLOR_GRAY2BGR);
+		fflush(stdout);
 
+		//convert frame from BGR to HSV colorspace
+		cvtColor(local_frame, HSV, COLOR_BGR2HSV);
+		inRange(HSV, Scalar(H_MIN, S_MIN, V_MIN), Scalar(H_MAX, S_MAX, V_MAX), color_thresh);
+		
+		//morphOps(threshold);
+		
+		// trackFilteredObject(x, y, threshold, local_frame);
+
+		//DEBUG
+			cvtColor(color_thresh, gray, COLOR_GRAY2BGR);
+			// threshold_debug.write(gray);
+			
+		sem_wait(&h->acc_frame);
+
+		gray.copyTo(h->detect_frame);
+		h->newDetection = 1;
+
+		sem_post(&h->acc_frame);
+
+		//imwrite("test.jpg", local_frame);
+
+		//cout << "FINAL:\nX: " << x << "\nY: " << y << endl;
+		
+		if(color_thresh.empty()) 
+				printf("\n\n\n\nsONO IO CHE GLIELO DO VUOTO\n");
+
+		fflush(stdout);
+		
+
+		sem_wait(&d->det_sem);
+
+		color_thresh.copyTo(d->color_thresh);
+
+		if(d->color_thresh.empty()) 
+			printf("\n\n\n\nCopia sbagliata?\n");
+
+		fflush(stdout);
+
+		
+		if(d->color_ready == 0) {
+			//my part is ready, waking up the task that calculates movement
+			d->color_ready = 1;
+			sem_post(&d->priv_col);
+		}
+			
+
+		sem_post(&d->det_sem);
+		
+		//cvtColor(threshold, gray, COLOR_GRAY2BGR);
+	}
 }
 
 //
 void detect_color() {
 
 	long int current, start;
-	int i = 0;
+	// int i = 0;
+
+	// ptask_wait_for_activation();
 	
 	while(1) {
-		start = get_time_ms();
+		// start = get_time_ms();
 		//cout << "pigliaml il frame\n";
 
 		preproc_detect(&handler, &detection_handler);
 		
-		current = get_time_ms();
+		// current = get_time_ms();
 
-		i++;
-		//cout << "detect color: " << current-start << " ms, frame n. " << i << "\n";
-		fflush(stdout);
+		// i++;
+		// cout << "detect color: " << current-start << " ms, frame n. " << i << "\n";
+		// fflush(stdout);
 
 		ptask_wait_for_period();
 	}
@@ -505,23 +631,23 @@ void serial_receive(struct components_handler_t *c) {
 	char *eptr;
 	long int sensor_value = 0;
 	int i = 0;
-	int current_obj_det = 0;
+	int current_obst_det = 0;
 
 	input_sensor[INPUT_SENSOR_LENGTH - 1] = 0;
 
 	sem_wait(&c->acc_serial_out);
-	printf("SENSOR leggo \n");
+	//printf("SENSOR leggo \n");
 
 	//clean up the serial from bad data
 	while(next_char == 0 || next_char == '\n') {
 		next_char = serialGetchar(fd_serial);
-		printf("%d ", next_char);
+		//printf("%d ", next_char);
 	}
 
 	//populate the input array with the values from our serial
 	while((next_char >= '0' && next_char <= '9') && i < INPUT_SENSOR_LENGTH - 1) {
 		input_sensor[i] = next_char;
-		printf("%d ", next_char);
+		//printf("%d ", next_char);
 
 		next_char = serialGetchar(fd_serial);
 		i++;
@@ -531,7 +657,7 @@ void serial_receive(struct components_handler_t *c) {
 		}
 	}
 
-	printf("\n");
+	//printf("\n");
 	
 	input_sensor[i] = 0; //close the string
 
@@ -544,11 +670,11 @@ void serial_receive(struct components_handler_t *c) {
 
 	c->sens_dist_val = (int) sensor_value;
 
-	//printf("il sensore ha trovato: %d\n\n\n", sensor_value);
+	printf("il sensore ha trovato: %d\n\n\n", sensor_value);
 
 
 	if(sensor_value <= MIN_OBSTACLE_DIST) {
-		current_obj_det = 1; //true
+		current_obst_det = 1; //true
 		//printf("Obastacle found %d!\n\n\n\n\n\n\n\n\n\n", sensor_value);
 	} else {
 		// if(sensor_value != 0)
@@ -558,20 +684,20 @@ void serial_receive(struct components_handler_t *c) {
 		// 	printf("riga 555\n");
 		// }
 		
-		current_obj_det = 0; //false
+		current_obst_det = 0; //false
 	}
 
 	//block the car if object is found
-	if(current_obj_det == 1 && c->last_object_detected == 0) {
-		//printf("BLOCKING THE CAR!!!\n");
-		//serial_send(ENGINE_ID, 0);
+	if(current_obst_det == 1 && c->last_obstacle_detected == 0) {
+		printf("BLOCKING THE CAR!!!\n");
+		serial_send(ENGINE_ID, 0);
 		serial_send(SERVO_ID, NOT_CHANGE);
 	} else {
-;	// 	printf("curr: %d, last: %d\n", current_obj_det, c->last_object_detected);
+;	// 	printf("curr: %d, last: %d\n", current_obst_det, c->last_obstacle_detected);
 	}
 
 	//update object detected
-	c->last_object_detected = current_obj_det;
+	c->last_obstacle_detected = current_obst_det;
 	
 	// printf("Ricevuto valore del sensore di prossimita': %d\n", c->sens_dist_val);
 
@@ -582,29 +708,31 @@ void serial_receive(struct components_handler_t *c) {
 void sensor_bridge() {
 
 	long int current, start;
-	int i = 0;
+	// int i = 0;
+
+	// ptask_wait_for_activation();
 	
 	while(1) {
-		start = get_time_ms();
+		// start = get_time_ms();
 		//cout << "pigliaml il frame\n";
 
 		if(serialDataAvail(fd_serial) == -1) {
 			printf("serial error\n");
 		} else {
 			//read
-			printf("%d data available\n", serialDataAvail(fd_serial));
+			//printf("%d data available\n", serialDataAvail(fd_serial));
 			while (serialDataAvail(fd_serial) >= SER_MESS_LENGTH) {
-				printf("leggo\n");
+				// printf("leggo\n");
 				serial_receive(&components_handler);
 			}
 
 			// printf("finito di leggere la seriale\n");
 		}
 		
-		current = get_time_ms();
+		// current = get_time_ms();
 
-		i++;
-		//cout << "detect circ: " << current-start << " ms, frame n. " << i << "\n";
+		// i++;
+		// cout << "sensor bridge: " << current-start << " ms\n";
 		fflush(stdout);
 
 		ptask_wait_for_period();
@@ -699,7 +827,7 @@ void serial_send(int componentId, int componentValue) {
 	if(componentValue >= 0) {
 		sprintf(ser_message, "<%d:%d>", componentId, componentValue);
 		serialPuts(fd_serial, ser_message);
-		printf("%s\n", ser_message);
+		// printf("%s\n", ser_message);
 	}
 	
 }
@@ -711,7 +839,7 @@ void send_movement(struct components_handler_t *c, int servo_val, int engine_val
 	// printf("MOVE prendo \n");
 
 	//update the movement path (only if an object is not detected)
-	if(c->last_object_detected == 0) {
+	if(c->last_obstacle_detected == 0) {
 		serial_send(ENGINE_ID, engine_val);
 		
 		if(servo_val >= SERVO_CENTER - (SERVO_RANGE / 2) && servo_val <= SERVO_CENTER + (SERVO_RANGE / 2)) {
@@ -734,10 +862,13 @@ void check_move() {
 
 	long int current, start;
 	bool objectFound;
-	int i = 0, servo_val = 0, engine_val = 0;
+	int /*i = 0,*/ servo_val = 0, engine_val = 0;
+
+	// ptask_wait_for_activation();
+
 	while(1) {
 		//cout << "pigliaml il frame\n";
-		start = get_time_ms();		
+		// start = get_time_ms();		
 
 		objectFound = calc_movement(&detection_handler, servo_val, engine_val);
 
@@ -756,10 +887,10 @@ void check_move() {
 		}
 		
 
-		current = get_time_ms();
+		// current = get_time_ms();
 
-		i++;
-		//cout << "move: " << current-start << " ms, frame n. " << i << "\n";
+		// i++;
+		// cout << "move: " << current-start << " ms, frame n. " << i << "\n";
 
 		ptask_wait_for_period();
 	}
@@ -771,58 +902,77 @@ void check_move() {
 
 
 void create_tasks() {
-    tpars param;
-	tpars mover_prm;
-	tpars param_sec;
-	tpars sensor;
-	int ret;
+    tpars params[NUM_TASKS];
+	int i, num_cores;
 
     init();
 
-	param = TASK_SPEC_DFL;
-	param.period = tspec_from(PER, MILLI);
-	param.rdline = tspec_from(DREL, MILLI);
-	param.priority = PRIO;
-	param.measure_flag = 1;
-	param.act_flag = NOW;
+	num_cores = ptask_getnumcores();
 
-	param = TASK_SPEC_DFL;
-	param.period = tspec_from(PER, MILLI);
-	param.rdline = tspec_from(DREL, MILLI);
-	param.priority = PRIO-1;
-	param.measure_flag = 1;
-	param.act_flag = NOW;
+	for(i = 0; i < NUM_TASKS; i++) {
+		params[i] = TASK_SPEC_DFL;
+		params[i].measure_flag = 1;
+		params[i].act_flag = DEFERRED;
+		// params[i].processor = i % num_cores; // to distribute the tasks on the available cores
+	}
 
-	mover_prm = TASK_SPEC_DFL;
-	mover_prm.period = tspec_from(PER, MILLI);
-	mover_prm.rdline = tspec_from(DREL, MILLI);
-	mover_prm.priority = PRIO-1;
-	mover_prm.measure_flag = 1;
-	mover_prm.act_flag = NOW;
+	//store video
+	params[0].period = tspec_from(FRAME_PER, MILLI);
+	// params[0].rdline = tspec_from(STORE_DREL, MILLI);
+	params[0].priority = FRAME_PRIO;
 
-	ret = ptask_create_param(frame_acquisition, &param);
-	if(ret == -1)
+	//sensor bridge
+	params[1].period = tspec_from(SENSOR_PER, MILLI);
+	// params[1].rdline = tspec_from(DREL, MILLI);
+	params[1].priority = SENSOR_PRIO;
+
+	//frame acquisition
+	params[2].period = tspec_from(STORE_PER, MILLI);
+	// params[2].rdline = tspec_from(DREL, MILLI);
+	params[2].priority = STORE_PRIO;
+
+	//object detection
+	params[3].period = tspec_from(DETECT_PER, MILLI);
+	// params[3].rdline = tspec_from(DREL, MILLI);
+	params[3].priority = DETECT_PRIO;
+
+	//check & move
+	params[4].period = tspec_from(MOVE_PER, MILLI);
+	// params[4].rdline = tspec_from(DREL, MILLI);
+	params[4].priority = MOVE_PRIO;
+
+	// param = TASK_SPEC_DFL;
+	// param.period = tspec_from(PER, MILLI);
+	// param.rdline = tspec_from(DREL, MILLI);
+	// param.priority = PRIO-1;
+	// param.measure_flag = 1;
+	// param.act_flag = NOW;
+
+	ret[0] = ptask_create_param(frame_acquisition, &params[0]);
+	if(ret[0] == -1)
 		printf("Error during the creation of the tasks\n");
-	
-	ret = ptask_create_param(store_video, &param);
-	if(ret == -1)
-		printf("Error during the creation of the tasks\n");
-
-	ret = ptask_create_param(detect_color, &param);
-	if(ret == -1)
-		printf("Error during the creation of the tasks\n");
-
-	// ret = ptask_create_param(detect_circles, &param);
-	// if(ret == -1)
-	// 	printf("Error during the creation of the tasks\n");
 	
 	//create the task that checks the sensors
-	ret = ptask_create_param(sensor_bridge, &mover_prm);
-	if(ret == -1)
+	ret[1] = ptask_create_param(sensor_bridge, &params[1]);
+	if(ret[1] == -1)
+		printf("Error during the creation of the tasks\n");
+
+	ret[2] = ptask_create_param(store_video, &params[2]);
+	if(ret[2] == -1)
+		printf("Error during the creation of the tasks\n");
+
+
+	ret[3] = ptask_create_param(detect_color, &params[3]);
+	if(ret[3] == -1)
 		printf("Error during the creation of the tasks\n");
 
 	//create the task that moves the car
-	ret = ptask_create_param(check_move, &mover_prm);
-	if(ret == -1)
+	ret[4] = ptask_create_param(check_move, &params[4]);
+	if(ret[4] == -1)
 		printf("Error during the creation of the tasks\n");
+
+	//activate the tasks
+	for(i = 0; i < NUM_TASKS; i++) {
+		ptask_activate(ret[i]);
+	}
 }

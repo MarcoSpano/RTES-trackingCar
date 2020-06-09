@@ -10,12 +10,16 @@ using namespace cv;
 
 int main()
 {
+	
+
 	//launch all the functionalities of the application
 	create_tasks();
 
 
 	//TO-DO codice da linea di comando per interagire
 	getchar();
+
+	close_app();
 
     return 0;
 }
