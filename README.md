@@ -43,6 +43,9 @@ sudo apt-get install libsdl2-dev\
 sudo apt-get install libgtkmm-3.0-dev\
 sudo apt-get install liballegro4.2-dev
 
+**Enable the camera**
+>sudo raspi-config
+
 **WiringPi:**
 
 >sudo apt-get install wiringpi
