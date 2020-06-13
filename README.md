@@ -68,7 +68,7 @@ make install
 
 **Ptask:**
 
- >git clone https://github.com/glipari/ptask.git\
+ >git clone https://github.com/glipari/ptask.git \
  mkdir build\
  cd build\
  cmake ..\
