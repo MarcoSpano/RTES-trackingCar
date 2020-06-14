@@ -15,7 +15,7 @@ find_library(wiringPi_LIB wiringPi)
 set(ptask_INCLUDE_DIRS "${ptask_DIR}/include")
 message("Including dir ${ptask_INCLUDE_DIRS}...")
 
-add_executable(application src/main.cpp src/carTraker.cpp)
+add_executable(application src/main.cpp src/car_traker.cpp src/camera.cpp src/control_system.cpp src/detection.cpp)
 
 include_directories ("${ptask_INCLUDE_DIRS}")
 include_directories(${OpenCV_INCLUDE_DIRS} )

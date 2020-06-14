@@ -1,10 +1,9 @@
-#include "../lib/carTraker.h"
-
-using namespace std;
-using namespace cv;
+#include "../lib/car_traker.h"
 
 int main()
 {
+	init();
+
 	//launch all the functionalities of the application
 	create_tasks();
 
