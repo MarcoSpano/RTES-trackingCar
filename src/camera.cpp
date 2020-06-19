@@ -3,10 +3,18 @@
 using namespace cv;
 using namespace std;
 
-//get a frame from the camera and stores it in matrix 'frame'
-void get_frame(struct handler_t *h) {
+//------------------------------------------------------------------------------
+//		This file contains all the functions related to the frame
+//		management, as the frame acquisition from the camera and the
+//		frame storing inside videos
+//------------------------------------------------------------------------------
 
-	Mat tmp;
+/**
+ * Gets the current frame from the camera and saves it
+ * @param	: struct camera_h *h;	pointer to the camera struct
+ */
+void get_frame(struct camera_h *h) {
+	Mat		tmp;		//temporary variable to save the current frame
 
 	cap.read(tmp);
 
@@ -16,46 +24,45 @@ void get_frame(struct handler_t *h) {
 	h->newFrame = 1;
 	h->newFrame2Det = 1;
 
-	// check if we succeeded
 	if (h->frame.empty()) {		
 		app_error((char *) "get_frame", (char *) "ERROR! blank frame grabbed");
 	}
 
-
 	sem_post(&h->acc_frame);
 }
 
-
-//store the frame acquired inside the video
-void store_frame(struct handler_t *h) {
-
-	Mat local_frame;
-	Mat local_det_frame;
-	int newFrame;
-	int newDetection;
+/**
+ * Stores the frames acquired inside video streamings
+ * @param	: struct camera_h *h;	pointer to the camera struct
+ */
+void store_frame(struct camera_h *h) {
+	Mat		local_frame;		//temporary variable to save the current frame
+	Mat		local_det_frame;	//temporary variable to save the detected frame
+	int		newFrame;			//tells if the current frame is already stored
+	int		newDetection;		//tells if the detected frame is already stored
 
 	sem_wait(&h->acc_frame);
 
-	//consume the new frame, if it is present
+	//consumes the new frames, if they are present
 	newFrame = h->newFrame;
 	h->newFrame = 0;
 	newDetection = h->newDetection;
 	h->newDetection = 0;
 
-	if(newFrame == 1)
+	if (newFrame == 1)
 		h->frame.copyTo(local_frame);
-	if(newDetection == 1)
+	if (newDetection == 1)
 		h->detect_frame.copyTo(local_det_frame);
 
 	sem_post(&h->acc_frame);
 	
-	if(newFrame == 1)
-		out_capture.write(local_frame);
+	if (newFrame == 1)
+		video_camera.write(local_frame);
 	else
-		printf("frame vecchio, salto %d\n", newFrame);
-	if(newDetection == 1)
-		threshold_debug.write(local_det_frame);
+		printf("current frame already stored, I move on\n");
+	
+	if (newDetection == 1) video_processed.write(local_det_frame);
 	else
-		printf("frame vecchio debug, salto\n");
+		printf("detected frame already stored, I move on\n");
 
 }

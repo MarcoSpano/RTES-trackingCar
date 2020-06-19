@@ -1,10 +1,17 @@
 #include "../lib/car_traker.h"
 
-int main()
-{
+//------------------------------------------------------------------------------
+//							MAIN APPLICATION	
+//------------------------------------------------------------------------------
+
+/**
+ * initialises the resources, creates the tasks and manages the shutdown
+ */
+int main() {
+
 	init();
 
-	//launch all the functionalities of the application
+	//create and launch all the functionalities of the application
 	create_tasks();
 
 	//inserting a character closes the app 
