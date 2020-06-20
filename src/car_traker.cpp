@@ -95,9 +95,9 @@ void init_resources() {
     }
 
 	//creation of the video streamings
-	video_camera.open("4video_car.avi", VideoWriter::fourcc('M','J','P','G'), 
+	video_camera.open("1_onboard_video.avi", VideoWriter::fourcc('M','J','P','G'), 
 		VIDEO_FRAMERATE, Size(FRAME_WIDTH, FRAME_HEIGHT));
-	video_processed.open("4debug.avi", VideoWriter::fourcc('M','J','P','G'), 
+	video_processed.open("2_car_view.avi", VideoWriter::fourcc('M','J','P','G'), 
 		VIDEO_FRAMERATE, Size(FRAME_WIDTH, FRAME_HEIGHT));
 
 	//open and initialise serial connection
