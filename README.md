@@ -2,16 +2,18 @@
 
 ## Introduction
 
-Tracking Car: A Real-Time application guide the car to chase a blue ball, since the ball is not reached or lost from the camera view. Thanks to an ultrasonic sensor on the front, the car is able to cut off the engine when the object is close or an obstacle is found. Two videos are recorded from the camera during the whole run, one directly from the camera and one after the process of detection (showing in white what it has detected).
+Tracking Car: A Real-Time application drives the car to chase a blue ball till the ball is not reached or lost from the camera view. Using an ultrasonic sensor on the front, the car is also able to cut off the engine when the object is close to the vehicle or an obstacle is found. Two videos are recorded from the camera during the whole run, one directly from the camera and one after the detection process (showing in white what it has detected).
+
+[![Demonstration video](media/yt_video.png)](https://youtu.be/kEDyJJeeosM)
 
 The car is completely assembled from scratch. It is composed by:
-- 3D printed chassis, steering rod and wheels
-- Raspberry Pi 3 B model
+- 3D printed chassis, steering block and wheels
+- Raspberry Pi 3 model B
 - MicroSD 8 GB
 - USB key 128GB
 - Arduino UNO
-- Camera modulo for Raspberry
-- 4x DualShock 3 Vibration Motors
+- Camera module for Raspberry
+- 4x PS3 DualShock Controller Vibration Motors
 - Step up boost converter
 - Micro Servo MG90S
 - Ultrasonic Sensor HC-SR04
@@ -22,6 +24,8 @@ The car is completely assembled from scratch. It is composed by:
 - Resistor
 - Breadboard
 - Wirings
+
+![ ](media/car_render.jpeg?raw=true "Car render")
 
 ## Instructions
 
