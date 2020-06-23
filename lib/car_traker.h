@@ -45,59 +45,59 @@ using namespace std;
 //------------------------------------------------------------------------------
 //						    TASK RELATED CONSTANTS
 //------------------------------------------------------------------------------
-#define WAIT_BEFORE_CLOSE 500
-#define NUM_TASKS 5
-#define STORE_PER 120 
-#define STORE_PRIO 70           //low priority
-#define SENSOR_PER 10
-#define SENSOR_PRIO 95          //max priority
-#define FRAME_PER 80
-#define FRAME_PRIO 95           //max priority
-#define DETECT_PER 80
-#define DETECT_PRIO 90          //high priority
-#define MOVE_PER 80
-#define MOVE_PRIO 80            //mid priority
+#define		WAIT_BEFORE_CLOSE	500
+#define		NUM_TASKS			5
+#define		STORE_PER			120 
+#define		STORE_PRIO			70	//low priority
+#define		SENSOR_PER			10
+#define		SENSOR_PRIO			95	//max priority
+#define		FRAME_PER			80
+#define		FRAME_PRIO			95	//max priority
+#define		DETECT_PER			80
+#define		DETECT_PRIO			90	//high priority
+#define		MOVE_PER			80
+#define		MOVE_PRIO			80	//mid priority
 
 //------------------------------------------------------------------------------
 //				        SERIAL RELATED CONSTANTS
 //------------------------------------------------------------------------------
-#define SER_MESS_LENGTH 10
-#define BAUD_RATE 9600
+#define		SER_MESS_LENGTH		10
+#define		BAUD_RATE			9600
 
 //------------------------------------------------------------------------------
 //				CONTROL SYSTEM RELATED CONSTANTS
 //------------------------------------------------------------------------------
-#define NOT_CHANGE -1
-#define INPUT_SENSOR_LEN 10
-#define MIN_OBSTACLE_DIST 25
-#define ENGINE_ID 1
-#define SERVO_ID 2
-#define SERVO_RANGE 36          //80 is the maximum for the chassis limitations
-#define SERVO_CENTER 90
+#define		NOT_CHANGE			-1
+#define		INPUT_SENSOR_LEN	10
+#define		MIN_OBSTACLE_DIST	25
+#define		ENGINE_ID			1
+#define		SERVO_ID			2
+#define		SERVO_RANGE			36	//80 is the maximum for the chassis limitations
+#define		SERVO_CENTER		90
 
 //------------------------------------------------------------------------------
 //					COLOR DETECTION CONSTANTS
 //------------------------------------------------------------------------------
-#define H_MIN 120
-#define H_MAX 176
-#define S_MIN 97
-#define S_MAX 256
-#define V_MIN 32
-#define V_MAX 159
+#define		H_MIN				120
+#define		H_MAX				176
+#define		S_MIN				97
+#define		S_MAX				256
+#define		V_MIN				32
+#define		V_MAX				159
 
 //------------------------------------------------------------------------------
 //						CAMERA RELATED CONSTANTS
 //------------------------------------------------------------------------------
-#define FRAME_WIDTH 640
-#define FRAME_HEIGHT 480
-#define VIDEO_FRAMERATE 1000 / STORE_PER
+#define		FRAME_WIDTH			640
+#define		FRAME_HEIGHT		480
+#define		VIDEO_FRAMERATE		1000 / STORE_PER
 
 //------------------------------------------------------------------------------
 //						DETECTION RELATED CONSTANTS
 //------------------------------------------------------------------------------
-#define MAX_NUM_OBJECTS 50
-#define MIN_OBJ 2 * 2                          //depends on the background noise
-#define MAX_OBJ FRAME_HEIGHT * FRAME_WIDTH / 1.5
+#define		MAX_NUM_OBJECTS		50
+#define		MIN_OBJ				2 * 2	//depends on the background noise
+#define		MAX_OBJ				FRAME_HEIGHT * FRAME_WIDTH / 1.5
 
 //------------------------------------------------------------------------------
 //						VARIABLES
